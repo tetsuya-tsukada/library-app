@@ -184,6 +184,9 @@ function doGet(e) {
       case 'getConfig':
         result = getConfig();
         break;
+      case 'checkAdmin':
+        result = { isAdmin: !!e.parameter.email && isAdmin_(e.parameter.email) };
+        break;
       default:
         result = { error: 'Unknown action' };
     }

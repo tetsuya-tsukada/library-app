@@ -230,6 +230,7 @@ const APPROVAL_POLL_INTERVAL_MS = 4000;
 const APPROVAL_POLL_MAX_ATTEMPTS = 45; // ~3 minutes
 
 function showScreen(name){
+  if(name==='shelf' && !(USER && USER.isAdmin)) name = 'scan';
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('nav.bottom button').forEach(b=>b.classList.remove('active'));
   const el = document.getElementById('screen-'+name);
@@ -244,7 +245,26 @@ async function init(){
   updateWhoBadge();
   await loadRemoteConfig();
   if(!USER){ showScreen('identify'); return; }
+  await checkAdminStatus();
   showScreen('scan');
+}
+
+async function checkAdminStatus(){
+  if(!USER || !USER.contact){ applyAdminUI(false); return; }
+  try{
+    const res = await fetch(CONFIG.apiUrl + '?action=checkAdmin&email=' + encodeURIComponent(USER.contact));
+    const data = await res.json();
+    USER.isAdmin = !!data.isAdmin;
+    localStorage.setItem('stacks_user', JSON.stringify(USER));
+  }catch(e){
+    USER.isAdmin = false;
+  }
+  applyAdminUI(USER.isAdmin);
+}
+
+function applyAdminUI(isAdmin){
+  const shelfNav = document.getElementById('nav-shelf');
+  if(shelfNav) shelfNav.style.display = isAdmin ? '' : 'none';
 }
 
 async function loadRemoteConfig(){
@@ -271,16 +291,18 @@ function logout(){
   USER = null;
   localStorage.removeItem('stacks_user');
   updateWhoBadge();
+  applyAdminUI(false);
   showScreen('identify');
 }
 
-function saveGuest(){
+async function saveGuest(){
   const name = document.getElementById('guestName').value.trim();
   const contact = document.getElementById('guestContact').value.trim();
   if(!name){ alert('Enter your name.'); return; }
   USER = { name, contact, mode:'guest' };
   localStorage.setItem('stacks_user', JSON.stringify(USER));
   updateWhoBadge();
+  await checkAdminStatus();
   showScreen('scan');
 }
 
@@ -323,6 +345,7 @@ async function handleGoogleToken(resp){
     USER = { name: profile.email, contact: profile.email, mode:'google' };
     localStorage.setItem('stacks_user', JSON.stringify(USER));
     updateWhoBadge();
+    await checkAdminStatus();
     showScreen('scan');
   }catch(e){
     console.warn('Google sign-in unavailable', e);
@@ -362,11 +385,12 @@ async function signInWithFacebook(){
     FB.init({ appId: CONFIG.fbAppId, cookie:true, xfbml:false, version:'v19.0' });
     FB.login((resp)=>{
       if(resp.authResponse){
-        FB.api('/me', { fields:'email' }, (profile)=>{
+        FB.api('/me', { fields:'email' }, async (profile)=>{
           if(!profile.email){ alert('Facebook sign-in failed — no email permission granted. Try guest mode.'); return; }
           USER = { name: profile.email, contact: profile.email, mode:'facebook' };
           localStorage.setItem('stacks_user', JSON.stringify(USER));
           updateWhoBadge();
+          await checkAdminStatus();
           showScreen('scan');
         });
       } else {
