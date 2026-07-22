@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Stacks — Community Library</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://alcdn.msauth.net/browser/3.14.0/js/msal-browser.min.js" async defer></script>
+<style>
+  :root{
+    --ink:#1B2430;
+    --ink-2:#252F3D;
+    --paper:#F2E9D8;
+    --paper-2:#E8DCC3;
+    --stamp-red:#B2412F;
+    --stamp-teal:#3F6659;
+    --gold:#C9A227;
+    --line:rgba(242,233,216,0.14);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--ink);
+    color:var(--paper);
+    font-family:'Inter',sans-serif;
+    min-height:100vh;
+    -webkit-font-smoothing:antialiased;
+  }
+  .app{max-width:480px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column;}
+  header.top{
+    padding:22px 20px 16px;
+    display:flex;align-items:baseline;justify-content:space-between;
+    border-bottom:1px solid var(--line);
+  }
+  header.top .brand{
+    font-family:'Zilla Slab',serif;font-weight:700;font-size:22px;letter-spacing:0.3px;
+  }
+  header.top .brand small{
+    display:block;font-family:'JetBrains Mono',monospace;font-weight:400;
+    font-size:10px;letter-spacing:1.5px;color:var(--gold);text-transform:uppercase;margin-top:2px;
+  }
+  .who{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--paper);opacity:0.6;text-align:right;cursor:pointer;}
+
+  main{flex:1;padding:20px;padding-bottom:100px;}
+  .screen{display:none;}
+  .screen.active{display:block;}
+
+  /* Buttons */
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:8px;
+    width:100%;padding:16px;border-radius:4px;border:none;
+    font-family:'Inter',sans-serif;font-weight:600;font-size:15px;
+    cursor:pointer;transition:transform .08s ease, opacity .15s ease;
+  }
+  .btn:active{transform:scale(0.98);}
+  .btn-primary{background:var(--gold);color:var(--ink);}
+  .btn-outline{background:transparent;color:var(--paper);border:1px solid var(--line);}
+  .btn-ghost{background:var(--ink-2);color:var(--paper);}
+  .btn:disabled{opacity:0.4;cursor:not-allowed;}
+
+  input[type=text],input[type=tel],input[type=email]{
+    width:100%;padding:14px;border-radius:4px;border:1px solid var(--line);
+    background:var(--ink-2);color:var(--paper);font-family:'Inter',sans-serif;font-size:15px;
+    margin-bottom:12px;
+  }
+  label{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--gold);display:block;margin-bottom:6px;}
+  .field{margin-bottom:18px;}
+
+  /* Scan screen */
+  .scan-hero{text-align:center;padding:30px 0 20px;}
+  .scan-hero h1{font-family:'Zilla Slab',serif;font-size:28px;margin:0 0 6px;}
+  .scan-hero p{opacity:0.65;font-size:14px;margin:0;}
+  #reader{border-radius:8px;overflow:hidden;border:1px solid var(--line);margin:16px 0;}
+  #reader video{border-radius:8px;}
+
+  /* Stamp result card */
+  .stamp-card{
+    background:var(--paper);color:var(--ink);border-radius:6px;padding:28px 22px;
+    position:relative;overflow:hidden;margin-top:18px;
+    box-shadow:0 12px 30px rgba(0,0,0,0.35);
+  }
+  .stamp-card .eyebrow{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;opacity:0.55;}
+  .stamp-card h2{font-family:'Zilla Slab',serif;font-size:24px;margin:6px 0 14px;line-height:1.15;}
+  .stamp-mark{
+    position:absolute;top:18px;right:-14px;
+    font-family:'Zilla Slab',serif;font-weight:700;font-size:15px;
+    letter-spacing:2px;text-transform:uppercase;
+    padding:7px 26px;transform:rotate(9deg);
+    border:2.5px solid; border-radius:3px;
+    animation:stampIn .35s cubic-bezier(.2,1.6,.4,1) both;
+  }
+  .stamp-mark.borrow{color:var(--stamp-red);border-color:var(--stamp-red);}
+  .stamp-mark.return{color:var(--stamp-teal);border-color:var(--stamp-teal);}
+  @keyframes stampIn{0%{transform:rotate(9deg) scale(2.4);opacity:0;}100%{transform:rotate(9deg) scale(1);opacity:1;}}
+  .stamp-card .detail-row{display:flex;justify-content:space-between;font-size:13px;padding:7px 0;border-top:1px solid rgba(27,36,48,0.12);}
+  .stamp-card .detail-row span:first-child{opacity:0.55;font-family:'JetBrains Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;}
+
+  .error-card{background:rgba(178,65,47,0.15);border:1px solid var(--stamp-red);border-radius:6px;padding:16px;margin-top:16px;font-size:14px;}
+
+  /* Shelf */
+  .book-row{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--line);}
+  .book-row .meta{flex:1;}
+  .book-row .title{font-size:14px;font-weight:600;}
+  .book-row .sub{font-family:'JetBrains Mono',monospace;font-size:11px;opacity:0.55;margin-top:2px;}
+  .status-pill{font-family:'JetBrains Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;padding:4px 8px;border-radius:20px;}
+  .status-pill.avail{background:rgba(63,102,89,0.25);color:#8fd6bd;}
+  .status-pill.borrowed{background:rgba(178,65,47,0.25);color:#e8998a;}
+  .status-pill.pending{background:rgba(201,162,39,0.25);color:var(--gold);}
+
+  .label-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px;}
+  .label{background:var(--paper);color:var(--ink);border-radius:4px;padding:10px;text-align:center;}
+  .label .qr{margin:0 auto 6px;width:100px;height:100px;}
+  .label .lt{font-size:11px;font-weight:600;line-height:1.2;margin-bottom:2px;}
+  .label .li{font-family:'JetBrains Mono',monospace;font-size:9px;opacity:0.6;}
+
+  /* Bottom nav */
+  nav.bottom{
+    position:fixed;bottom:0;left:0;right:0;
+    background:var(--ink-2);border-top:1px solid var(--line);
+    max-width:480px;margin:0 auto;
+    display:flex;
+  }
+  nav.bottom button{
+    flex:1;background:none;border:none;color:var(--paper);opacity:0.5;
+    padding:14px 0 10px;font-family:'JetBrains Mono',monospace;font-size:10px;
+    letter-spacing:1px;text-transform:uppercase;cursor:pointer;
+  }
+  nav.bottom button.active{opacity:1;color:var(--gold);}
+
+  h3.section-title{font-family:'Zilla Slab',serif;font-size:18px;margin:0 0 4px;}
+  p.section-sub{opacity:0.6;font-size:13px;margin:0 0 18px;}
+  .divider{height:1px;background:var(--line);margin:22px 0;}
+  a.linklike{color:var(--gold);text-decoration:none;}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="top">
+    <div class="brand">Stacks<small>Community Library</small></div>
+    <div class="who" id="whoBadge" onclick="showScreen('identify')">Set up</div>
+  </header>
+
+  <main>
+
+    <!-- SETTINGS -->
+    <section class="screen" id="screen-settings">
+      <h3 class="section-title">Connect your library sheet</h3>
+      <p class="section-sub">Paste the Web App URL from your Apps Script deployment. One-time setup.</p>
+      <div class="field">
+        <label>Apps Script Web App URL</label>
+        <input type="text" id="apiUrl" placeholder="https://script.google.com/macros/s/.../exec">
+      </div>
+      <div class="field">
+        <label>Google Sign-In Client ID (optional)</label>
+        <input type="text" id="googleClientId" placeholder="xxxx.apps.googleusercontent.com">
+      </div>
+      <div class="field">
+        <label>Microsoft Sign-In Client ID (optional)</label>
+        <input type="text" id="msClientId" placeholder="Azure AD app (client) ID">
+      </div>
+      <div class="field">
+        <label>Facebook App ID (optional)</label>
+        <input type="text" id="fbAppId" placeholder="Facebook App ID">
+      </div>
+      <button class="btn btn-primary" onclick="saveSettings()">Save & continue</button>
+    </section>
+
+    <!-- IDENTIFY -->
+    <section class="screen" id="screen-identify">
+      <h3 class="section-title">Who's scanning?</h3>
+      <p class="section-sub">This name is attached to borrow &amp; return records.</p>
+      <div id="googleBtnHolder" style="margin-bottom:14px;"></div>
+      <div id="msBtnHolder" style="margin-bottom:14px;"></div>
+      <div id="fbBtnHolder" style="margin-bottom:14px;"></div>
+      <div class="divider" style="margin:16px 0;"></div>
+      <div class="field">
+        <label>Name</label>
+        <input type="text" id="guestName" placeholder="Your name">
+      </div>
+      <div class="field">
+        <label>Phone or email</label>
+        <input type="text" id="guestContact" placeholder="For contacting about overdue books">
+      </div>
+      <button class="btn btn-primary" onclick="saveGuest()">Continue as guest</button>
+      <button class="btn btn-outline" style="margin-top:10px;" onclick="showScreen('settings')">← Back to settings</button>
+    </section>
+
+    <!-- SCAN -->
+    <section class="screen" id="screen-scan">
+      <div class="scan-hero">
+        <h1>Scan a book</h1>
+        <p>One scan requests to borrow it — an admin approves in the Sheet. Scan the same book again to return it.</p>
+      </div>
+      <button class="btn btn-primary" id="scanBtn" onclick="toggleScanner()">Start scanning</button>
+      <div id="reader" style="display:none;"></div>
+      <div id="resultArea"></div>
+    </section>
+
+    <!-- SHELF -->
+    <section class="screen" id="screen-shelf">
+      <h3 class="section-title">The shelf</h3>
+      <p class="section-sub" id="shelfCount">Loading…</p>
+      <button class="btn btn-ghost" onclick="loadShelf()">Refresh</button>
+      <div class="divider"></div>
+      <h3 class="section-title" style="font-size:15px;">Add a book</h3>
+      <div class="field">
+        <label>Title</label>
+        <input type="text" id="newTitle" placeholder="Book title">
+      </div>
+      <div class="field">
+        <label>Author</label>
+        <input type="text" id="newAuthor" placeholder="Author (optional)">
+      </div>
+      <button class="btn btn-primary" onclick="addBook()">Add & generate label</button>
+      <div id="newLabelArea"></div>
+      <div class="divider"></div>
+      <h3 class="section-title" style="font-size:15px;">Print all QR labels</h3>
+      <p class="section-sub">Generates one label per book — item ID, title, and scannable QR.</p>
+      <button class="btn btn-outline" onclick="printAllLabels()">Open printable label sheet</button>
+      <div class="divider"></div>
+      <h3 class="section-title" style="font-size:15px;">All books</h3>
+      <div id="bookList"></div>
+    </section>
+
+  </main>
+
+  <nav class="bottom">
+    <button id="nav-scan" onclick="showScreen('scan')">Scan</button>
+    <button id="nav-shelf" onclick="showScreen('shelf')">Shelf</button>
+    <button id="nav-settings" onclick="showScreen('settings')">Settings</button>
+  </nav>
+</div>
+
+<script>
+const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbwRnC0_y_zvejQqwGZfzryYJcAMvvTGOAjoyz2aI-Eh5sByhZ4dFVaAncWW24pc-Uim/exec';
+let CONFIG = JSON.parse(localStorage.getItem('stacks_config') || '{}');
+if(!CONFIG.apiUrl){ CONFIG.apiUrl = DEFAULT_API_URL; }
+let USER = JSON.parse(localStorage.getItem('stacks_user') || 'null');
+let html5QrCode = null;
+let scanning = false;
+let bookCache = [];
+let msalInstance = null;
+let approvalPollTimer = null;
+let approvalPollAttempts = 0;
+const APPROVAL_POLL_INTERVAL_MS = 4000;
+const APPROVAL_POLL_MAX_ATTEMPTS = 45; // ~3 minutes
+
+function showScreen(name){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.querySelectorAll('nav.bottom button').forEach(b=>b.classList.remove('active'));
+  const el = document.getElementById('screen-'+name);
+  if(el) el.classList.add('active');
+  const nav = document.getElementById('nav-'+name);
+  if(nav) nav.classList.add('active');
+  if(name==='shelf') loadShelf();
+  if(name==='identify'){ renderGoogleButton(); renderMsButton(); renderFbButton(); }
+}
+
+function init(){
+  document.getElementById('apiUrl').value = CONFIG.apiUrl || '';
+  document.getElementById('googleClientId').value = CONFIG.googleClientId || '';
+  document.getElementById('msClientId').value = CONFIG.msClientId || '';
+  document.getElementById('fbAppId').value = CONFIG.fbAppId || '';
+  updateWhoBadge();
+  if(!CONFIG.apiUrl){ showScreen('settings'); return; }
+  if(!USER){ showScreen('identify'); return; }
+  showScreen('scan');
+}
+
+function updateWhoBadge(){
+  const b = document.getElementById('whoBadge');
+  b.textContent = USER ? USER.name : 'Set up';
+}
+
+function saveSettings(){
+  const url = document.getElementById('apiUrl').value.trim();
+  if(!url){ alert('Paste your Apps Script Web App URL first.'); return; }
+  CONFIG.apiUrl = url;
+  CONFIG.googleClientId = document.getElementById('googleClientId').value.trim();
+  CONFIG.msClientId = document.getElementById('msClientId').value.trim();
+  CONFIG.fbAppId = document.getElementById('fbAppId').value.trim();
+  localStorage.setItem('stacks_config', JSON.stringify(CONFIG));
+  msalInstance = null;
+  showScreen('identify');
+}
+
+function saveGuest(){
+  const name = document.getElementById('guestName').value.trim();
+  const contact = document.getElementById('guestContact').value.trim();
+  if(!name){ alert('Enter your name.'); return; }
+  USER = { name, contact, mode:'guest' };
+  localStorage.setItem('stacks_user', JSON.stringify(USER));
+  updateWhoBadge();
+  showScreen('scan');
+}
+
+function renderGoogleButton(){
+  const holder = document.getElementById('googleBtnHolder');
+  holder.innerHTML = '';
+  if(!CONFIG.googleClientId || !window.google){ return; }
+  try{
+    google.accounts.id.initialize({
+      client_id: CONFIG.googleClientId,
+      callback: handleGoogleCredential
+    });
+    google.accounts.id.renderButton(holder, { theme:'outline', size:'large', width:280 });
+  }catch(e){ console.warn('Google sign-in unavailable', e); }
+}
+
+function handleGoogleCredential(resp){
+  try{
+    const payload = JSON.parse(atob(resp.credential.split('.')[1]));
+    USER = { name: payload.name, contact: payload.email, mode:'google' };
+    localStorage.setItem('stacks_user', JSON.stringify(USER));
+    updateWhoBadge();
+    showScreen('scan');
+  }catch(e){ alert('Google sign-in failed, try guest mode.'); }
+}
+
+function renderMsButton(){
+  const holder = document.getElementById('msBtnHolder');
+  holder.innerHTML = '';
+  if(!CONFIG.msClientId || !window.msal){ return; }
+  const btn = document.createElement('button');
+  btn.className = 'btn btn-outline';
+  btn.textContent = 'Sign in with Microsoft';
+  btn.onclick = signInWithMicrosoft;
+  holder.appendChild(btn);
+}
+
+async function getMsalInstance(){
+  if(!msalInstance){
+    msalInstance = new msal.PublicClientApplication({
+      auth: {
+        clientId: CONFIG.msClientId,
+        authority: 'https://login.microsoftonline.com/common',
+        redirectUri: window.location.origin + window.location.pathname
+      }
+    });
+    await msalInstance.initialize();
+  }
+  return msalInstance;
+}
+
+async function signInWithMicrosoft(){
+  try{
+    const instance = await getMsalInstance();
+    const result = await instance.loginPopup({ scopes: ['User.Read'] });
+    const acct = result.account;
+    USER = { name: acct.name || acct.username, contact: acct.username, mode:'microsoft' };
+    localStorage.setItem('stacks_user', JSON.stringify(USER));
+    updateWhoBadge();
+    showScreen('scan');
+  }catch(e){
+    console.warn('Microsoft sign-in unavailable', e);
+    alert('Microsoft sign-in failed, try guest mode.');
+  }
+}
+
+function renderFbButton(){
+  const holder = document.getElementById('fbBtnHolder');
+  holder.innerHTML = '';
+  if(!CONFIG.fbAppId){ return; }
+  const btn = document.createElement('button');
+  btn.className = 'btn btn-outline';
+  btn.textContent = 'Sign in with Facebook';
+  btn.onclick = signInWithFacebook;
+  holder.appendChild(btn);
+}
+
+function loadFacebookSdk(){
+  return new Promise((resolve, reject)=>{
+    if(window.FB){ resolve(window.FB); return; }
+    let js = document.getElementById('fb-jssdk');
+    if(!js){
+      js = document.createElement('script');
+      js.id = 'fb-jssdk';
+      js.src = 'https://connect.facebook.net/en_US/sdk.js';
+      js.onerror = () => reject(new Error('Facebook SDK failed to load'));
+      document.body.appendChild(js);
+    }
+    js.addEventListener('load', () => resolve(window.FB));
+  });
+}
+
+async function signInWithFacebook(){
+  try{
+    const FB = await loadFacebookSdk();
+    FB.init({ appId: CONFIG.fbAppId, cookie:true, xfbml:false, version:'v19.0' });
+    FB.login((resp)=>{
+      if(resp.authResponse){
+        FB.api('/me', { fields:'name,email' }, (profile)=>{
+          USER = { name: profile.name, contact: profile.email || '', mode:'facebook' };
+          localStorage.setItem('stacks_user', JSON.stringify(USER));
+          updateWhoBadge();
+          showScreen('scan');
+        });
+      } else {
+        alert('Facebook sign-in was cancelled.');
+      }
+    }, { scope: 'public_profile,email' });
+  }catch(e){
+    console.warn('Facebook sign-in unavailable', e);
+    alert('Facebook sign-in failed, try guest mode.');
+  }
+}
+
+async function toggleScanner(){
+  const reader = document.getElementById('reader');
+  const btn = document.getElementById('scanBtn');
+  if(scanning){
+    await html5QrCode.stop();
+    reader.style.display='none';
+    btn.textContent='Start scanning';
+    scanning=false;
+    return;
+  }
+  reader.style.display='block';
+  btn.textContent='Stop scanning';
+  scanning=true;
+  html5QrCode = new Html5Qrcode('reader');
+  html5QrCode.start(
+    { facingMode: 'environment' },
+    { fps:10, qrbox:220 },
+    onScanSuccess,
+    ()=>{}
+  ).catch(err=>{
+    document.getElementById('resultArea').innerHTML =
+      '<div class="error-card">Camera access failed: '+err+'</div>';
+    scanning=false; btn.textContent='Start scanning'; reader.style.display='none';
+  });
+}
+
+async function onScanSuccess(decodedText){
+  await html5QrCode.stop();
+  document.getElementById('reader').style.display='none';
+  document.getElementById('scanBtn').textContent='Start scanning';
+  scanning=false;
+  processScan(decodedText.trim());
+}
+
+async function processScan(itemId){
+  stopApprovalPolling();
+  const area = document.getElementById('resultArea');
+  area.innerHTML = '<p style="opacity:0.6;font-family:JetBrains Mono,monospace;font-size:12px;">Updating sheet…</p>';
+  try{
+    const url = CONFIG.apiUrl + '?action=scan&itemId=' + encodeURIComponent(itemId)
+      + '&name=' + encodeURIComponent(USER.name)
+      + '&contact=' + encodeURIComponent(USER.contact || '');
+    const res = await fetch(url);
+    const data = await res.json();
+    if(data.error){
+      area.innerHTML = '<div class="error-card">'+data.error+' (scanned ID: '+itemId+')</div>';
+      return;
+    }
+    if(data.action === 'pending'){
+      renderPendingApproval(data);
+      startApprovalPolling(data.requestId);
+      return;
+    }
+    renderStamp(data);
+  }catch(e){
+    area.innerHTML = '<div class="error-card">Couldn\'t reach the sheet. Check your connection and Apps Script URL in Settings.</div>';
+  }
+}
+
+function renderStamp(data){
+  const area = document.getElementById('resultArea');
+  const isBorrow = data.action === 'borrow';
+  const stampClass = isBorrow ? 'borrow' : 'return';
+  const stampLabel = isBorrow ? 'Borrowed' : 'Returned';
+  let rows = '';
+  if(isBorrow){
+    rows += detailRow('Borrower', data.borrowerName);
+    rows += detailRow('Due back', new Date(data.dueDate).toLocaleDateString());
+  } else {
+    rows += detailRow('Returned by', data.borrowerName || USER.name);
+  }
+  rows += detailRow('Item ID', data.itemId);
+  area.innerHTML = `
+    <div class="stamp-card">
+      <div class="stamp-mark ${stampClass}">${stampLabel}</div>
+      <div class="eyebrow">${isBorrow ? 'Now on loan' : 'Back on the shelf'}</div>
+      <h2>${escapeHtml(data.title)}</h2>
+      ${rows}
+    </div>`;
+}
+
+function renderPendingApproval(data){
+  const area = document.getElementById('resultArea');
+  area.innerHTML = `
+    <div class="stamp-card">
+      <div class="eyebrow">Awaiting admin approval</div>
+      <h2>${escapeHtml(data.title)}</h2>
+      <div class="detail-row"><span>Item ID</span><span>${escapeHtml(data.itemId)}</span></div>
+      <p style="opacity:0.6;font-size:13px;margin-top:14px;">An admin needs to approve this borrow request in the Google Sheet. This updates automatically once they do — no need to rescan.</p>
+    </div>`;
+}
+
+function stopApprovalPolling(){
+  if(approvalPollTimer){ clearInterval(approvalPollTimer); approvalPollTimer = null; }
+  approvalPollAttempts = 0;
+}
+
+function startApprovalPolling(requestId){
+  stopApprovalPolling();
+  if(!requestId) return;
+  approvalPollTimer = setInterval(() => pollApproval(requestId), APPROVAL_POLL_INTERVAL_MS);
+}
+
+async function pollApproval(requestId){
+  approvalPollAttempts++;
+  if(approvalPollAttempts > APPROVAL_POLL_MAX_ATTEMPTS){
+    stopApprovalPolling();
+    document.getElementById('resultArea').innerHTML +=
+      '<div class="error-card">Still waiting on admin approval. Check back later — no need to rescan.</div>';
+    return;
+  }
+  try{
+    const res = await fetch(CONFIG.apiUrl + '?action=checkApproval&requestId=' + encodeURIComponent(requestId));
+    const data = await res.json();
+    if(data.error) return; // transient error — keep polling
+    if(data.status === 'approved'){
+      stopApprovalPolling();
+      renderStamp({ action:'borrow', itemId:data.itemId, title:data.title, borrowerName:data.borrowerName, dueDate:data.dueDate });
+    } else if(data.status === 'denied'){
+      stopApprovalPolling();
+      document.getElementById('resultArea').innerHTML =
+        '<div class="error-card">Request denied by admin for "'+escapeHtml(data.title)+'".</div>';
+    }
+  }catch(e){ /* network hiccup — keep polling */ }
+}
+function detailRow(k,v){ return `<div class="detail-row"><span>${k}</span><span>${escapeHtml(String(v||'—'))}</span></div>`; }
+function escapeHtml(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+
+async function loadShelf(){
+  const countEl = document.getElementById('shelfCount');
+  const listEl = document.getElementById('bookList');
+  countEl.textContent = 'Loading…';
+  try{
+    const res = await fetch(CONFIG.apiUrl + '?action=list');
+    const data = await res.json();
+    bookCache = data.books || [];
+    const borrowed = bookCache.filter(b=>b.Status==='Borrowed').length;
+    countEl.textContent = bookCache.length + ' books · ' + borrowed + ' currently on loan';
+    listEl.innerHTML = bookCache.map(b=>{
+      const pillClass = b.Status==='Borrowed' ? 'borrowed' : (b.Status==='Pending' ? 'pending' : 'avail');
+      const pillLabel = b.Status==='Borrowed' ? 'Out' : (b.Status==='Pending' ? 'Awaiting approval' : 'On shelf');
+      const sub = (b.Status==='Borrowed' || b.Status==='Pending') ? ' · ' + escapeHtml(b.BorrowerName||'') : '';
+      return `
+      <div class="book-row">
+        <div class="meta">
+          <div class="title">${escapeHtml(b.Title)}</div>
+          <div class="sub">${escapeHtml(b.ItemID)}${sub}</div>
+        </div>
+        <span class="status-pill ${pillClass}">${pillLabel}</span>
+      </div>`;
+    }).join('');
+  }catch(e){
+    countEl.textContent = 'Could not load — check Settings.';
+  }
+}
+
+function nextItemId(){
+  let max = 0;
+  bookCache.forEach(b=>{
+    const m = String(b.ItemID).match(/(\d+)$/);
+    if(m) max = Math.max(max, parseInt(m[1],10));
+  });
+  return 'BK-' + String(max+1).padStart(4,'0');
+}
+
+async function addBook(){
+  const title = document.getElementById('newTitle').value.trim();
+  const author = document.getElementById('newAuthor').value.trim();
+  if(!title){ alert('Enter a title.'); return; }
+  const itemId = nextItemId();
+  try{
+    const url = CONFIG.apiUrl + '?action=addBook&itemId='+encodeURIComponent(itemId)
+      + '&title='+encodeURIComponent(title) + '&author='+encodeURIComponent(author);
+    const res = await fetch(url);
+    const data = await res.json();
+    if(data.error){ alert(data.error); return; }
+    document.getElementById('newTitle').value='';
+    document.getElementById('newAuthor').value='';
+    document.getElementById('newLabelArea').innerHTML = renderLabel(itemId, title);
+    renderQr('label-'+itemId, itemId);
+    loadShelf();
+  }catch(e){ alert('Could not add book — check Settings.'); }
+}
+
+function renderLabel(itemId, title){
+  return `<div class="label-grid"><div class="label">
+    <div class="qr" id="label-${itemId}"></div>
+    <div class="lt">${escapeHtml(title)}</div>
+    <div class="li">${escapeHtml(itemId)}</div>
+  </div></div>`;
+}
+function renderQr(elId, text){
+  setTimeout(()=>{
+    const el = document.getElementById(elId);
+    if(el && window.QRCode) new QRCode(el, { text, width:100, height:100, colorDark:'#1B2430', colorLight:'#F2E9D8' });
+  }, 50);
+}
+
+function printAllLabels(){
+  if(!bookCache.length){ alert('Load the shelf first.'); return; }
+  const w = window.open('', '_blank');
+  w.document.write(`<html><head><title>Library labels</title><style>
+    body{font-family:sans-serif;margin:0;padding:20px;}
+    .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
+    .lab{border:1px dashed #999;border-radius:4px;padding:10px;text-align:center;page-break-inside:avoid;}
+    .lab .t{font-size:11px;font-weight:600;margin:6px 0 2px;line-height:1.2;}
+    .lab .i{font-family:monospace;font-size:9px;color:#666;}
+  </style></head><body><div class="grid" id="g"></div></body></html>`);
+  w.document.close();
+  const g = w.document.getElementById('g');
+  bookCache.forEach(b=>{
+    const cell = w.document.createElement('div');
+    cell.className='lab';
+    cell.innerHTML = `<div class="qr-${b.ItemID}"></div><div class="t">${b.Title}</div><div class="i">${b.ItemID}</div>`;
+    g.appendChild(cell);
+  });
+  setTimeout(()=>{
+    bookCache.forEach(b=>{
+      const holder = w.document.querySelector('.qr-'+b.ItemID.replace(/[^a-zA-Z0-9-]/g,''));
+      if(holder) new w.QRCode(holder, { text:b.ItemID, width:80, height:80 });
+    });
+    setTimeout(()=>w.print(), 400);
+  }, 200);
+}
+
+init();
+</script>
+</body>
+</html>
