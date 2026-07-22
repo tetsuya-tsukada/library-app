@@ -9,7 +9,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
-<script src="https://alcdn.msauth.net/browser/3.14.0/js/msal-browser.min.js" async defer></script>
 <style>
   :root{
     --ink:#1B2430;
@@ -142,26 +141,18 @@
 
   <header class="top">
     <div class="brand">Stacks<small>Community Library</small></div>
-    <div class="who" id="whoBadge" onclick="showScreen('identify')">Set up</div>
+    <div class="who" id="whoBadge" onclick="handleWhoBadgeClick()">Log in</div>
   </header>
 
   <main>
 
     <!-- SETTINGS -->
     <section class="screen" id="screen-settings">
-      <h3 class="section-title">Connect your library sheet</h3>
-      <p class="section-sub">Paste the Web App URL from your Apps Script deployment. One-time setup.</p>
-      <div class="field">
-        <label>Apps Script Web App URL</label>
-        <input type="text" id="apiUrl" placeholder="https://script.google.com/macros/s/.../exec">
-      </div>
+      <h3 class="section-title">Sign-in setup</h3>
+      <p class="section-sub">Add your Google and Facebook app credentials to enable social sign-in below. Optional — guests can always continue without it.</p>
       <div class="field">
         <label>Google Sign-In Client ID (optional)</label>
         <input type="text" id="googleClientId" placeholder="xxxx.apps.googleusercontent.com">
-      </div>
-      <div class="field">
-        <label>Microsoft Sign-In Client ID (optional)</label>
-        <input type="text" id="msClientId" placeholder="Azure AD app (client) ID">
       </div>
       <div class="field">
         <label>Facebook App ID (optional)</label>
@@ -175,7 +166,6 @@
       <h3 class="section-title">Who's scanning?</h3>
       <p class="section-sub">This name is attached to borrow &amp; return records.</p>
       <div id="googleBtnHolder" style="margin-bottom:14px;"></div>
-      <div id="msBtnHolder" style="margin-bottom:14px;"></div>
       <div id="fbBtnHolder" style="margin-bottom:14px;"></div>
       <div class="divider" style="margin:16px 0;"></div>
       <div class="field">
@@ -244,7 +234,6 @@ let USER = JSON.parse(localStorage.getItem('stacks_user') || 'null');
 let html5QrCode = null;
 let scanning = false;
 let bookCache = [];
-let msalInstance = null;
 let approvalPollTimer = null;
 let approvalPollAttempts = 0;
 const APPROVAL_POLL_INTERVAL_MS = 4000;
@@ -258,34 +247,37 @@ function showScreen(name){
   const nav = document.getElementById('nav-'+name);
   if(nav) nav.classList.add('active');
   if(name==='shelf') loadShelf();
-  if(name==='identify'){ renderGoogleButton(); renderMsButton(); renderFbButton(); }
+  if(name==='identify'){ renderGoogleButton(); renderFbButton(); }
 }
 
 function init(){
-  document.getElementById('apiUrl').value = CONFIG.apiUrl || '';
   document.getElementById('googleClientId').value = CONFIG.googleClientId || '';
-  document.getElementById('msClientId').value = CONFIG.msClientId || '';
   document.getElementById('fbAppId').value = CONFIG.fbAppId || '';
   updateWhoBadge();
-  if(!CONFIG.apiUrl){ showScreen('settings'); return; }
   if(!USER){ showScreen('identify'); return; }
   showScreen('scan');
 }
 
 function updateWhoBadge(){
   const b = document.getElementById('whoBadge');
-  b.textContent = USER ? USER.name : 'Set up';
+  b.textContent = USER ? 'Log out' : 'Log in';
+}
+
+function handleWhoBadgeClick(){
+  if(USER){ logout(); } else { showScreen('identify'); }
+}
+
+function logout(){
+  USER = null;
+  localStorage.removeItem('stacks_user');
+  updateWhoBadge();
+  showScreen('identify');
 }
 
 function saveSettings(){
-  const url = document.getElementById('apiUrl').value.trim();
-  if(!url){ alert('Paste your Apps Script Web App URL first.'); return; }
-  CONFIG.apiUrl = url;
   CONFIG.googleClientId = document.getElementById('googleClientId').value.trim();
-  CONFIG.msClientId = document.getElementById('msClientId').value.trim();
   CONFIG.fbAppId = document.getElementById('fbAppId').value.trim();
   localStorage.setItem('stacks_config', JSON.stringify(CONFIG));
-  msalInstance = null;
   showScreen('identify');
 }
 
@@ -302,63 +294,46 @@ function saveGuest(){
 function renderGoogleButton(){
   const holder = document.getElementById('googleBtnHolder');
   holder.innerHTML = '';
-  if(!CONFIG.googleClientId || !window.google){ return; }
-  try{
-    google.accounts.id.initialize({
-      client_id: CONFIG.googleClientId,
-      callback: handleGoogleCredential
-    });
-    google.accounts.id.renderButton(holder, { theme:'outline', size:'large', width:280 });
-  }catch(e){ console.warn('Google sign-in unavailable', e); }
-}
-
-function handleGoogleCredential(resp){
-  try{
-    const payload = JSON.parse(atob(resp.credential.split('.')[1]));
-    USER = { name: payload.name, contact: payload.email, mode:'google' };
-    localStorage.setItem('stacks_user', JSON.stringify(USER));
-    updateWhoBadge();
-    showScreen('scan');
-  }catch(e){ alert('Google sign-in failed, try guest mode.'); }
-}
-
-function renderMsButton(){
-  const holder = document.getElementById('msBtnHolder');
-  holder.innerHTML = '';
-  if(!CONFIG.msClientId || !window.msal){ return; }
+  if(!CONFIG.googleClientId){ return; }
   const btn = document.createElement('button');
   btn.className = 'btn btn-outline';
-  btn.textContent = 'Sign in with Microsoft';
-  btn.onclick = signInWithMicrosoft;
+  btn.textContent = 'Sign in with Google';
+  btn.onclick = signInWithGoogle;
   holder.appendChild(btn);
 }
 
-async function getMsalInstance(){
-  if(!msalInstance){
-    msalInstance = new msal.PublicClientApplication({
-      auth: {
-        clientId: CONFIG.msClientId,
-        authority: 'https://login.microsoftonline.com/common',
-        redirectUri: window.location.origin + window.location.pathname
-      }
-    });
-    await msalInstance.initialize();
+let googleTokenClient = null;
+
+function signInWithGoogle(){
+  if(!window.google || !google.accounts || !google.accounts.oauth2){
+    alert('Google sign-in unavailable, try again in a moment or use guest mode.');
+    return;
   }
-  return msalInstance;
+  if(!googleTokenClient){
+    googleTokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: CONFIG.googleClientId,
+      scope: 'email',
+      callback: handleGoogleToken
+    });
+  }
+  googleTokenClient.requestAccessToken();
 }
 
-async function signInWithMicrosoft(){
+async function handleGoogleToken(resp){
+  if(resp.error){ alert('Google sign-in failed, try guest mode.'); return; }
   try{
-    const instance = await getMsalInstance();
-    const result = await instance.loginPopup({ scopes: ['User.Read'] });
-    const acct = result.account;
-    USER = { name: acct.name || acct.username, contact: acct.username, mode:'microsoft' };
+    const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: 'Bearer ' + resp.access_token }
+    });
+    const profile = await r.json();
+    if(!profile.email){ alert('Google sign-in failed, try guest mode.'); return; }
+    USER = { name: profile.email, contact: profile.email, mode:'google' };
     localStorage.setItem('stacks_user', JSON.stringify(USER));
     updateWhoBadge();
     showScreen('scan');
   }catch(e){
-    console.warn('Microsoft sign-in unavailable', e);
-    alert('Microsoft sign-in failed, try guest mode.');
+    console.warn('Google sign-in unavailable', e);
+    alert('Google sign-in failed, try guest mode.');
   }
 }
 
@@ -394,8 +369,9 @@ async function signInWithFacebook(){
     FB.init({ appId: CONFIG.fbAppId, cookie:true, xfbml:false, version:'v19.0' });
     FB.login((resp)=>{
       if(resp.authResponse){
-        FB.api('/me', { fields:'name,email' }, (profile)=>{
-          USER = { name: profile.name, contact: profile.email || '', mode:'facebook' };
+        FB.api('/me', { fields:'email' }, (profile)=>{
+          if(!profile.email){ alert('Facebook sign-in failed — no email permission granted. Try guest mode.'); return; }
+          USER = { name: profile.email, contact: profile.email, mode:'facebook' };
           localStorage.setItem('stacks_user', JSON.stringify(USER));
           updateWhoBadge();
           showScreen('scan');
@@ -403,7 +379,7 @@ async function signInWithFacebook(){
       } else {
         alert('Facebook sign-in was cancelled.');
       }
-    }, { scope: 'public_profile,email' });
+    }, { scope: 'email' });
   }catch(e){
     console.warn('Facebook sign-in unavailable', e);
     alert('Facebook sign-in failed, try guest mode.');
@@ -465,7 +441,7 @@ async function processScan(itemId){
     }
     renderStamp(data);
   }catch(e){
-    area.innerHTML = '<div class="error-card">Couldn\'t reach the sheet. Check your connection and Apps Script URL in Settings.</div>';
+    area.innerHTML = '<div class="error-card">Couldn\'t reach the sheet. Check your connection and try again.</div>';
   }
 }
 
@@ -562,7 +538,7 @@ async function loadShelf(){
       </div>`;
     }).join('');
   }catch(e){
-    countEl.textContent = 'Could not load — check Settings.';
+    countEl.textContent = 'Could not load — check your connection and try again.';
   }
 }
 
@@ -591,7 +567,7 @@ async function addBook(){
     document.getElementById('newLabelArea').innerHTML = renderLabel(itemId, title);
     renderQr('label-'+itemId, itemId);
     loadShelf();
-  }catch(e){ alert('Could not add book — check Settings.'); }
+  }catch(e){ alert('Could not add book — check your connection and try again.'); }
 }
 
 function renderLabel(itemId, title){
