@@ -66,8 +66,13 @@
     background:var(--ink-2);color:var(--paper);font-family:'Inter',sans-serif;font-size:15px;
     margin-bottom:12px;
   }
+  input[type=file]{
+    width:100%;padding:10px;border-radius:4px;border:1px solid var(--line);
+    background:var(--ink-2);color:var(--paper);font-family:'Inter',sans-serif;font-size:13px;
+  }
   label{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--gold);display:block;margin-bottom:6px;}
   .field{margin-bottom:18px;}
+  .btn-sm{width:auto;padding:8px 14px;font-size:13px;}
 
   /* Scan screen */
   .scan-hero{text-align:center;padding:30px 0 20px;}
@@ -190,6 +195,11 @@
       <div class="divider"></div>
       <h3 class="section-title" style="font-size:15px;">Add a book</h3>
       <div class="field">
+        <label>Scan cover with camera (optional)</label>
+        <input type="file" accept="image/*" capture="environment" id="coverPhoto" onchange="scanCoverPhoto(event)">
+        <p class="section-sub" id="ocrStatus" style="margin:6px 0 0;"></p>
+      </div>
+      <div class="field">
         <label>Title</label>
         <input type="text" id="newTitle" placeholder="Book title">
       </div>
@@ -209,11 +219,26 @@
       <div id="bookList"></div>
     </section>
 
+    <!-- APPROVALS (admin only) -->
+    <section class="screen" id="screen-approvals">
+      <h3 class="section-title">Pending approvals</h3>
+      <p class="section-sub" id="approvalsCount">Loading…</p>
+      <div class="field">
+        <label>Search</label>
+        <input type="text" id="approvalsSearch" placeholder="Search by name or email" oninput="renderApprovalsList()">
+      </div>
+      <button class="btn btn-primary" onclick="approveAllRequests()">Approve all</button>
+      <button class="btn btn-ghost" style="margin-top:10px;" onclick="loadApprovals()">Refresh</button>
+      <div class="divider"></div>
+      <div id="approvalsList"></div>
+    </section>
+
   </main>
 
   <nav class="bottom">
     <button id="nav-scan" onclick="showScreen('scan')">Scan</button>
     <button id="nav-shelf" onclick="showScreen('shelf')">Shelf</button>
+    <button id="nav-approvals" onclick="showScreen('approvals')">Approvals</button>
   </nav>
 </div>
 
@@ -231,7 +256,7 @@ const APPROVAL_POLL_INTERVAL_MS = 4000;
 const APPROVAL_POLL_MAX_ATTEMPTS = 45; // ~3 minutes
 
 function showScreen(name){
-  if(name==='shelf' && !(USER && USER.isAdmin)) name = 'scan';
+  if((name==='shelf' || name==='approvals') && !(USER && USER.isAdmin)) name = 'scan';
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('nav.bottom button').forEach(b=>b.classList.remove('active'));
   const el = document.getElementById('screen-'+name);
@@ -239,6 +264,7 @@ function showScreen(name){
   const nav = document.getElementById('nav-'+name);
   if(nav) nav.classList.add('active');
   if(name==='shelf') loadShelf();
+  if(name==='approvals') loadApprovals();
   if(name==='identify'){ renderGoogleButton(); renderFbButton(); }
 }
 
@@ -266,6 +292,8 @@ async function checkAdminStatus(){
 function applyAdminUI(isAdmin){
   const shelfNav = document.getElementById('nav-shelf');
   if(shelfNav) shelfNav.style.display = isAdmin ? '' : 'none';
+  const approvalsNav = document.getElementById('nav-approvals');
+  if(approvalsNav) approvalsNav.style.display = isAdmin ? '' : 'none';
 }
 
 async function loadRemoteConfig(){
@@ -568,6 +596,67 @@ function renderBookList(){
   }).join('') || '<p style="opacity:0.6;font-size:13px;">No books match your search.</p>';
 }
 
+let approvalsCache = [];
+
+async function loadApprovals(){
+  const countEl = document.getElementById('approvalsCount');
+  countEl.textContent = 'Loading…';
+  try{
+    const res = await fetch(CONFIG.apiUrl + '?action=listApprovals&adminEmail=' + encodeURIComponent(USER.contact||''));
+    const data = await res.json();
+    if(data.error){
+      countEl.textContent = data.error;
+      approvalsCache = [];
+      renderApprovalsList();
+      return;
+    }
+    approvalsCache = data.approvals || [];
+    countEl.textContent = approvalsCache.length + ' pending';
+    renderApprovalsList();
+  }catch(e){
+    countEl.textContent = 'Could not load — check your connection and try again.';
+  }
+}
+
+function renderApprovalsList(){
+  const listEl = document.getElementById('approvalsList');
+  const q = (document.getElementById('approvalsSearch').value || '').trim().toLowerCase();
+  const filtered = !q ? approvalsCache : approvalsCache.filter(a =>
+    String(a.requesterName||'').toLowerCase().includes(q) || String(a.requesterContact||'').toLowerCase().includes(q)
+  );
+  listEl.innerHTML = filtered.map(a => `
+    <div class="book-row">
+      <div class="meta">
+        <div class="title">${escapeHtml(a.title)}</div>
+        <div class="sub">${escapeHtml(a.itemId)} · ${escapeHtml(a.requesterName)} · ${escapeHtml(a.requesterContact||'')}</div>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="approveOne('${a.requestId}')">Approve</button>
+    </div>`).join('') || '<p style="opacity:0.6;font-size:13px;">No pending requests'+(q?' match your search':'')+'.</p>';
+}
+
+async function approveOne(requestId){
+  try{
+    const url = CONFIG.apiUrl + '?action=approveRequest&requestId=' + encodeURIComponent(requestId)
+      + '&decision=Approve&adminEmail=' + encodeURIComponent(USER.contact||'');
+    const res = await fetch(url);
+    const data = await res.json();
+    if(data.error){ alert(data.error); return; }
+    loadApprovals();
+  }catch(e){ alert('Could not approve — check your connection and try again.'); }
+}
+
+async function approveAllRequests(){
+  if(!approvalsCache.length){ return; }
+  if(!confirm('Approve all '+approvalsCache.length+' pending requests?')) return;
+  try{
+    const url = CONFIG.apiUrl + '?action=approveAll&adminEmail=' + encodeURIComponent(USER.contact||'');
+    const res = await fetch(url);
+    const data = await res.json();
+    if(data.error){ alert(data.error); return; }
+    loadApprovals();
+  }catch(e){ alert('Could not approve all — check your connection and try again.'); }
+}
+
 function nextItemId(){
   let max = 0;
   bookCache.forEach(b=>{
@@ -594,6 +683,56 @@ async function addBook(){
     renderQr('label-'+itemId, itemId);
     loadShelf();
   }catch(e){ alert('Could not add book — check your connection and try again.'); }
+}
+
+function loadTesseract(){
+  return new Promise((resolve, reject)=>{
+    if(window.Tesseract){ resolve(window.Tesseract); return; }
+    let js = document.getElementById('tesseract-js');
+    if(!js){
+      js = document.createElement('script');
+      js.id = 'tesseract-js';
+      js.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+      js.onerror = () => reject(new Error('Tesseract.js failed to load'));
+      document.body.appendChild(js);
+    }
+    js.addEventListener('load', () => resolve(window.Tesseract));
+  });
+}
+
+async function scanCoverPhoto(evt){
+  const file = evt.target.files && evt.target.files[0];
+  if(!file) return;
+  const statusEl = document.getElementById('ocrStatus');
+  statusEl.textContent = 'Loading text scanner…';
+  try{
+    const Tesseract = await loadTesseract();
+    statusEl.textContent = 'Reading cover…';
+    const { data } = await Tesseract.recognize(file, 'eng');
+    const guess = guessTitleAuthor_(data);
+    if(guess.title) document.getElementById('newTitle').value = guess.title;
+    if(guess.author) document.getElementById('newAuthor').value = guess.author;
+    statusEl.textContent = guess.title
+      ? 'Filled in from the photo — please double-check before adding.'
+      : 'Could not confidently read the cover — fill in manually.';
+  }catch(e){
+    console.warn('OCR failed', e);
+    statusEl.textContent = 'Could not read the photo — fill in manually.';
+  }
+}
+
+// Rough heuristic only: the tallest confidently-read line on a book cover is
+// usually the title, so this is a fill-assist, not a reliable auto-fill —
+// always meant to be reviewed before adding the book.
+function guessTitleAuthor_(ocrData){
+  const lines = (ocrData.lines || [])
+    .map(l => ({ text: (l.text||'').trim(), height: l.bbox ? (l.bbox.y1 - l.bbox.y0) : 0, confidence: l.confidence||0 }))
+    .filter(l => l.text.length > 1 && l.confidence > 40);
+  if(!lines.length) return { title:'', author:'' };
+  lines.sort((a,b) => b.height - a.height);
+  const title = lines[0].text;
+  const authorLine = lines.find(l => l.text !== title);
+  return { title, author: authorLine ? authorLine.text : '' };
 }
 
 function renderLabel(itemId, title){
