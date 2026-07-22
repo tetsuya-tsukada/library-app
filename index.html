@@ -200,11 +200,12 @@
       <button class="btn btn-primary" onclick="addBook()">Add & generate label</button>
       <div id="newLabelArea"></div>
       <div class="divider"></div>
-      <h3 class="section-title" style="font-size:15px;">Print all QR labels</h3>
-      <p class="section-sub">Generates one label per book — item ID, title, and scannable QR.</p>
-      <button class="btn btn-outline" onclick="printAllLabels()">Open printable label sheet</button>
-      <div class="divider"></div>
       <h3 class="section-title" style="font-size:15px;">All books</h3>
+      <p class="section-sub">Printable QR label sheets are generated from the Google Sheet — open it and use the 📚 Library menu → Print QR labels.</p>
+      <div class="field">
+        <label>Search</label>
+        <input type="text" id="shelfSearch" placeholder="Search by title or author" oninput="renderBookList()">
+      </div>
       <div id="bookList"></div>
     </section>
 
@@ -533,7 +534,6 @@ function escapeHtml(s){ const d=document.createElement('div'); d.textContent=s; 
 
 async function loadShelf(){
   const countEl = document.getElementById('shelfCount');
-  const listEl = document.getElementById('bookList');
   countEl.textContent = 'Loading…';
   try{
     const res = await fetch(CONFIG.apiUrl + '?action=list');
@@ -541,22 +541,31 @@ async function loadShelf(){
     bookCache = data.books || [];
     const borrowed = bookCache.filter(b=>b.Status==='Borrowed').length;
     countEl.textContent = bookCache.length + ' books · ' + borrowed + ' currently on loan';
-    listEl.innerHTML = bookCache.map(b=>{
-      const pillClass = b.Status==='Borrowed' ? 'borrowed' : (b.Status==='Pending' ? 'pending' : 'avail');
-      const pillLabel = b.Status==='Borrowed' ? 'Out' : (b.Status==='Pending' ? 'Awaiting approval' : 'On shelf');
-      const sub = (b.Status==='Borrowed' || b.Status==='Pending') ? ' · ' + escapeHtml(b.BorrowerName||'') : '';
-      return `
-      <div class="book-row">
-        <div class="meta">
-          <div class="title">${escapeHtml(b.Title)}</div>
-          <div class="sub">${escapeHtml(b.ItemID)}${sub}</div>
-        </div>
-        <span class="status-pill ${pillClass}">${pillLabel}</span>
-      </div>`;
-    }).join('');
+    renderBookList();
   }catch(e){
     countEl.textContent = 'Could not load — check your connection and try again.';
   }
+}
+
+function renderBookList(){
+  const listEl = document.getElementById('bookList');
+  const q = (document.getElementById('shelfSearch').value || '').trim().toLowerCase();
+  const filtered = !q ? bookCache : bookCache.filter(b =>
+    String(b.Title||'').toLowerCase().includes(q) || String(b.Author||'').toLowerCase().includes(q)
+  );
+  listEl.innerHTML = filtered.map(b=>{
+    const pillClass = b.Status==='Borrowed' ? 'borrowed' : (b.Status==='Pending' ? 'pending' : 'avail');
+    const pillLabel = b.Status==='Borrowed' ? 'Out' : (b.Status==='Pending' ? 'Awaiting approval' : 'On shelf');
+    const sub = (b.Status==='Borrowed' || b.Status==='Pending') ? ' · ' + escapeHtml(b.BorrowerName||'') : '';
+    return `
+    <div class="book-row">
+      <div class="meta">
+        <div class="title">${escapeHtml(b.Title)}</div>
+        <div class="sub">${escapeHtml(b.ItemID)}${sub}</div>
+      </div>
+      <span class="status-pill ${pillClass}">${pillLabel}</span>
+    </div>`;
+  }).join('') || '<p style="opacity:0.6;font-size:13px;">No books match your search.</p>';
 }
 
 function nextItemId(){
@@ -599,35 +608,6 @@ function renderQr(elId, text){
     const el = document.getElementById(elId);
     if(el && window.QRCode) new QRCode(el, { text, width:100, height:100, colorDark:'#1B2430', colorLight:'#F2E9D8' });
   }, 50);
-}
-
-function printAllLabels(){
-  if(!bookCache.length){ alert('Load the shelf first.'); return; }
-  const w = window.open('', '_blank');
-  w.document.write(`<html><head><title>Library labels</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-    <style>
-    body{font-family:sans-serif;margin:0;padding:20px;}
-    .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
-    .lab{border:1px dashed #999;border-radius:4px;padding:10px;text-align:center;page-break-inside:avoid;}
-    .lab .t{font-size:11px;font-weight:600;margin:6px 0 2px;line-height:1.2;}
-    .lab .i{font-family:monospace;font-size:9px;color:#666;}
-  </style></head><body><div class="grid" id="g"></div></body></html>`);
-  w.document.close();
-  const g = w.document.getElementById('g');
-  bookCache.forEach(b=>{
-    const cell = w.document.createElement('div');
-    cell.className='lab';
-    cell.innerHTML = `<div class="qr-${b.ItemID}"></div><div class="t">${escapeHtml(b.Title)}</div><div class="i">${escapeHtml(b.ItemID)}</div>`;
-    g.appendChild(cell);
-  });
-  w.addEventListener('load', ()=>{
-    bookCache.forEach(b=>{
-      const holder = w.document.querySelector('.qr-'+b.ItemID.replace(/[^a-zA-Z0-9-]/g,''));
-      if(holder && w.QRCode) new w.QRCode(holder, { text:b.ItemID, width:80, height:80 });
-    });
-    setTimeout(()=>w.print(), 400);
-  });
 }
 
 init();
