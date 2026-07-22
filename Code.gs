@@ -27,6 +27,11 @@
  * 11. Add your books: run addBook manually a few times, OR just type
  *    rows directly into the Books tab (ItemID / Title / Author),
  *    leave Status blank — the app treats blank Status as Available.
+ * 12. Run `setupConfigSheet` once. This creates a Config tab (Key/Value
+ *    columns) pre-filled with a GoogleClientId row and a blank
+ *    FacebookAppId row. Edit those values any time to change or add
+ *    social sign-in credentials — the app reads this tab on every load,
+ *    so there's no code change or redeploy needed to update them.
  *
  * HOW APPROVAL WORKS:
  * - When someone scans an available book to borrow it, the book's
@@ -49,6 +54,7 @@ const BOOKS_SHEET = 'Books';
 const TX_SHEET = 'Transactions';
 const ADMINS_SHEET = 'Admins';
 const APPROVALS_SHEET = 'Approvals';
+const CONFIG_SHEET = 'Config';
 const LOAN_DAYS = 14;
 const APPROVAL_DECISION_COL = 7; // Approvals sheet: column G
 
@@ -96,6 +102,41 @@ function applyApprovalValidation_(sh, startRow, numRows) {
   sh.getRange(startRow, APPROVAL_DECISION_COL, numRows, 1).setDataValidation(rule);
 }
 
+// Safe to run any time, including after books/transactions already have
+// data — unlike setupSheets, this never clears an existing sheet.
+function setupConfigSheet() {
+  const ss = getSS();
+  let sh = ss.getSheetByName(CONFIG_SHEET);
+  if (!sh) {
+    sh = ss.insertSheet(CONFIG_SHEET);
+    sh.appendRow(['Key', 'Value']);
+    sh.setFrozenRows(1);
+  }
+  const data = sh.getDataRange().getValues();
+  const existingKeys = {};
+  for (let i = 1; i < data.length; i++) existingKeys[String(data[i][0]).trim()] = true;
+
+  const defaults = {
+    GoogleClientId: '435945836681-isujj29uiqondhrep745igce7505bpqv.apps.googleusercontent.com',
+    FacebookAppId: ''
+  };
+  Object.keys(defaults).forEach(key => {
+    if (!existingKeys[key]) sh.appendRow([key, defaults[key]]);
+  });
+}
+
+function getConfig() {
+  const sh = getSS().getSheetByName(CONFIG_SHEET);
+  if (!sh) return {};
+  const data = sh.getDataRange().getValues();
+  const cfg = {};
+  for (let i = 1; i < data.length; i++) {
+    const key = String(data[i][0]).trim();
+    if (key) cfg[key] = data[i][1];
+  }
+  return cfg;
+}
+
 function installApprovalTrigger() {
   const ss = getSS();
   ScriptApp.getProjectTriggers().forEach(t => {
@@ -129,6 +170,9 @@ function doGet(e) {
         break;
       case 'checkApproval':
         result = checkApproval(e.parameter.requestId);
+        break;
+      case 'getConfig':
+        result = getConfig();
         break;
       default:
         result = { error: 'Unknown action' };
