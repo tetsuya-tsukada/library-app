@@ -70,6 +70,10 @@
     width:100%;padding:10px;border-radius:4px;border:1px solid var(--line);
     background:var(--ink-2);color:var(--paper);font-family:'Inter',sans-serif;font-size:13px;
   }
+  input[type=date]{
+    padding:8px;border-radius:4px;border:1px solid var(--line);
+    background:var(--ink-2);color:var(--paper);font-family:'Inter',sans-serif;font-size:13px;
+  }
   label{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--gold);display:block;margin-bottom:6px;}
   .field{margin-bottom:18px;}
   .btn-sm{width:auto;padding:8px 14px;font-size:13px;}
@@ -302,6 +306,7 @@ async function loadRemoteConfig(){
     const data = await res.json();
     CONFIG.googleClientId = data.GoogleClientId || '';
     CONFIG.fbAppId = data.FacebookAppId || '';
+    CONFIG.loanDays = parseInt(data.LoanDays, 10) || 14;
   }catch(e){
     console.warn('Could not load sign-in config from the sheet', e);
   }
@@ -627,19 +632,31 @@ function renderApprovalsList(){
     String(a.requesterName||'').toLowerCase().includes(q) || String(a.requesterContact||'').toLowerCase().includes(q)
   );
   listEl.innerHTML = filtered.map(a => `
-    <div class="book-row">
+    <div class="book-row" style="flex-wrap:wrap;gap:8px;">
       <div class="meta">
         <div class="title">${escapeHtml(a.title)}</div>
         <div class="sub">${escapeHtml(a.itemId)} · ${escapeHtml(a.requesterName)} · ${escapeHtml(a.requesterContact||'')}</div>
       </div>
-      <button class="btn btn-primary btn-sm" onclick="approveOne('${a.requestId}')">Approve</button>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <input type="date" id="due-${a.requestId}" value="${defaultDueDateStr_()}">
+        <button class="btn btn-primary btn-sm" onclick="approveOne('${a.requestId}')">Approve</button>
+      </div>
     </div>`).join('') || '<p style="opacity:0.6;font-size:13px;">No pending requests'+(q?' match your search':'')+'.</p>';
+}
+
+function defaultDueDateStr_(){
+  const days = CONFIG.loanDays || 14;
+  const d = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+  return d.toISOString().slice(0, 10);
 }
 
 async function approveOne(requestId){
   try{
+    const dueInput = document.getElementById('due-'+requestId);
+    const dueDate = dueInput ? dueInput.value : '';
     const url = CONFIG.apiUrl + '?action=approveRequest&requestId=' + encodeURIComponent(requestId)
-      + '&decision=Approve&adminEmail=' + encodeURIComponent(USER.contact||'');
+      + '&decision=Approve&adminEmail=' + encodeURIComponent(USER.contact||'')
+      + (dueDate ? '&dueDate=' + encodeURIComponent(dueDate) : '');
     const res = await fetch(url);
     const data = await res.json();
     if(data.error){ alert(data.error); return; }

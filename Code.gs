@@ -28,10 +28,12 @@
  *    rows directly into the Books tab (ItemID / Title / Author),
  *    leave Status blank — the app treats blank Status as Available.
  * 12. Run `setupConfigSheet` once. This creates a Config tab (Key/Value
- *    columns) pre-filled with a GoogleClientId row and a blank
- *    FacebookAppId row. Edit those values any time to change or add
- *    social sign-in credentials — the app reads this tab on every load,
- *    so there's no code change or redeploy needed to update them.
+ *    columns) pre-filled with a GoogleClientId row, a blank
+ *    FacebookAppId row, and a LoanDays row (default 14). Edit any of
+ *    these any time — the app reads this tab on every load, so there's
+ *    no code change or redeploy needed to update them. Changing
+ *    LoanDays changes the default due date for future approvals; it
+ *    does not change books already borrowed.
  * 13. Reload the Google Sheet tab in your browser. A "📚 Library" menu
  *    appears next to Help — use its "Print QR labels" item any time to
  *    generate a printable label sheet (title, item ID, and a scannable
@@ -45,13 +47,20 @@
  *   Status becomes "Pending" and a row is added to the Approvals tab
  *   with Decision = "Pending".
  * - An admin opens the Approvals tab and changes that row's Decision
- *   cell to "Approve" or "Deny" (it's a dropdown).
+ *   cell to "Approve" or "Deny" (it's a dropdown). To hand out a
+ *   non-default due date, type a date into that row's CustomDueDate
+ *   column before switching Decision to Approve. Same thing is
+ *   possible from the web app's Approvals screen, which shows an
+ *   editable due-date field next to each request's Approve button
+ *   (bulk "Approve all" always uses the default, per-row overrides
+ *   only apply one at a time).
  * - The script checks the editor's email against the Admins tab. If
  *   they're not listed, the edit is reverted and nothing happens.
- * - If approved, the book becomes "Borrowed" with a due date. If
- *   denied, the book goes back to "Available". Either way the
- *   scanning app — which polls automatically — updates within a few
- *   seconds.
+ * - If approved, the book becomes "Borrowed" with a due date — a
+ *   CustomDueDate if one was given, otherwise today + the Config tab's
+ *   LoanDays. If denied, the book goes back to "Available". Either way
+ *   the scanning app — which polls automatically — updates within a
+ *   few seconds.
  * - Returning a borrowed book is immediate and never needs approval.
  * -----------------------------------------------------
  */
@@ -95,8 +104,12 @@ function setupSheets() {
   let approvals = ss.getSheetByName(APPROVALS_SHEET);
   if (!approvals) {
     approvals = ss.insertSheet(APPROVALS_SHEET);
-    approvals.appendRow(['RequestID', 'Timestamp', 'ItemID', 'Title', 'RequesterName', 'RequesterContact', 'Decision', 'DecidedBy', 'DecidedAt']);
+    approvals.appendRow(['RequestID', 'Timestamp', 'ItemID', 'Title', 'RequesterName', 'RequesterContact', 'Decision', 'DecidedBy', 'DecidedAt', 'CustomDueDate']);
     approvals.setFrozenRows(1);
+  } else if (String(approvals.getRange(1, 10).getValue()).trim() !== 'CustomDueDate') {
+    // Existing tab from before CustomDueDate existed — add the header
+    // without touching any existing rows.
+    approvals.getRange(1, 10).setValue('CustomDueDate');
   }
   applyApprovalValidation_(approvals, 2, 1000);
 }
@@ -131,11 +144,21 @@ function setupConfigSheet() {
 
   const defaults = {
     GoogleClientId: '435945836681-isujj29uiqondhrep745igce7505bpqv.apps.googleusercontent.com',
-    FacebookAppId: ''
+    FacebookAppId: '',
+    LoanDays: String(LOAN_DAYS)
   };
   Object.keys(defaults).forEach(key => {
     if (!existingKeys[key]) sh.appendRow([key, defaults[key]]);
   });
+}
+
+// Reads the loan period from the Config tab (LoanDays), falling back to
+// the LOAN_DAYS constant if the key is missing, blank, or not a number —
+// so an empty/misconfigured cell can't silently break borrowing.
+function getLoanDays_() {
+  const cfg = getConfig();
+  const days = parseInt(cfg.LoanDays, 10);
+  return (!isNaN(days) && days > 0) ? days : LOAN_DAYS;
 }
 
 function getConfig() {
@@ -261,7 +284,7 @@ function doGet(e) {
         result = listPendingApprovals(e.parameter.adminEmail);
         break;
       case 'approveRequest':
-        result = approveRequest(e.parameter.requestId, e.parameter.decision || 'Approve', e.parameter.adminEmail);
+        result = approveRequest(e.parameter.requestId, e.parameter.decision || 'Approve', e.parameter.adminEmail, e.parameter.dueDate);
         break;
       case 'approveAll':
         result = approveAllPending(e.parameter.adminEmail);
@@ -355,7 +378,7 @@ function findApprovalRow_(data, requestId) {
 
 function appendApprovalRequest_(requestId, itemId, title, name, contact) {
   const sh = getSS().getSheetByName(APPROVALS_SHEET);
-  sh.appendRow([requestId, new Date(), itemId, title, name, contact || '', 'Pending', '', '']);
+  sh.appendRow([requestId, new Date(), itemId, title, name, contact || '', 'Pending', '', '', '']);
   applyApprovalValidation_(sh, sh.getLastRow(), 1);
 }
 
@@ -422,12 +445,19 @@ function onApprovalEdit(e) {
  * actions. `row` is the 1-indexed Approvals sheet row. Does not itself
  * check admin status — callers must verify that first.
  */
-function applyApprovalDecision_(sh, row, decision, adminEmail) {
-  const rowData = sh.getRange(row, 1, 1, 6).getValues()[0];
+/**
+ * overrideDueDate (optional): a date passed in from the web app's
+ * approve action. If omitted, falls back to a CustomDueDate the admin
+ * may have typed into the Approvals sheet row itself, then to
+ * now + getLoanDays_() as the final default.
+ */
+function applyApprovalDecision_(sh, row, decision, adminEmail, overrideDueDate) {
+  const rowData = sh.getRange(row, 1, 1, 10).getValues()[0];
   const itemId = rowData[2];
   const title = rowData[3];
   const requesterName = rowData[4];
   const requesterContact = rowData[5];
+  const sheetCustomDue = rowData[9];
 
   const { sh: booksSh, data: books } = getBooksSheet_();
   const bRow = findRow_(books, itemId);
@@ -435,7 +465,17 @@ function applyApprovalDecision_(sh, row, decision, adminEmail) {
 
   if (decision === 'Approve' && bookIsPending) {
     const now = new Date();
-    const due = new Date(now.getTime() + LOAN_DAYS * 24 * 60 * 60 * 1000);
+    let due = null;
+    if (overrideDueDate) {
+      const d = new Date(overrideDueDate);
+      if (!isNaN(d.getTime())) due = d;
+    }
+    if (!due && sheetCustomDue) {
+      const d = new Date(sheetCustomDue);
+      if (!isNaN(d.getTime())) due = d;
+    }
+    if (!due) due = new Date(now.getTime() + getLoanDays_() * 24 * 60 * 60 * 1000);
+
     booksSh.getRange(bRow + 1, 4, 1, 5).setValues([['Borrowed', requesterName, requesterContact || '', now, due]]);
     logTx_(itemId, title, 'Borrow', requesterName, requesterContact);
   } else if (decision === 'Deny' && bookIsPending) {
@@ -466,7 +506,7 @@ function listPendingApprovals(adminEmail) {
   return { approvals };
 }
 
-function approveRequest(requestId, decision, adminEmail) {
+function approveRequest(requestId, decision, adminEmail, dueDate) {
   if (!adminEmail || !isAdmin_(adminEmail)) return { error: 'Not authorized' };
   if (decision !== 'Approve' && decision !== 'Deny') return { error: 'Invalid decision' };
   if (!requestId) return { error: 'Missing requestId' };
@@ -474,7 +514,7 @@ function approveRequest(requestId, decision, adminEmail) {
   const row = findApprovalRow_(data, requestId);
   if (row === -1) return { error: 'Request not found' };
   if (data[row][6] !== 'Pending') return { error: 'Request already decided' };
-  applyApprovalDecision_(sh, row + 1, decision, adminEmail);
+  applyApprovalDecision_(sh, row + 1, decision, adminEmail, dueDate);
   return { ok: true, requestId, decision };
 }
 
