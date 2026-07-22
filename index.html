@@ -161,13 +161,22 @@
       <button class="btn btn-primary" onclick="saveSettings()">Save & continue</button>
     </section>
 
-    <!-- IDENTIFY -->
+    <!-- IDENTIFY (login landing page) -->
     <section class="screen" id="screen-identify">
-      <h3 class="section-title">Who's scanning?</h3>
+      <h3 class="section-title">Sign in</h3>
+      <p class="section-sub">Choose how you'd like to check books in and out.</p>
+      <div id="googleBtnHolder" style="margin-bottom:12px;"></div>
+      <div id="fbBtnHolder" style="margin-bottom:12px;"></div>
+      <button class="btn btn-outline" onclick="showScreen('guest')">Sign in as a Guest</button>
+      <p class="section-sub" style="text-align:center;margin:18px 0 0;">
+        <a class="linklike" style="cursor:pointer;" onclick="showScreen('settings')">Configure sign-in options</a>
+      </p>
+    </section>
+
+    <!-- GUEST DETAILS -->
+    <section class="screen" id="screen-guest">
+      <h3 class="section-title">Sign in as a guest</h3>
       <p class="section-sub">This name is attached to borrow &amp; return records.</p>
-      <div id="googleBtnHolder" style="margin-bottom:14px;"></div>
-      <div id="fbBtnHolder" style="margin-bottom:14px;"></div>
-      <div class="divider" style="margin:16px 0;"></div>
       <div class="field">
         <label>Name</label>
         <input type="text" id="guestName" placeholder="Your name">
@@ -176,8 +185,8 @@
         <label>Phone or email</label>
         <input type="text" id="guestContact" placeholder="For contacting about overdue books">
       </div>
-      <button class="btn btn-primary" onclick="saveGuest()">Continue as guest</button>
-      <button class="btn btn-outline" style="margin-top:10px;" onclick="showScreen('settings')">← Back to settings</button>
+      <button class="btn btn-primary" onclick="saveGuest()">Continue</button>
+      <button class="btn btn-outline" style="margin-top:10px;" onclick="showScreen('identify')">← Back</button>
     </section>
 
     <!-- SCAN -->
