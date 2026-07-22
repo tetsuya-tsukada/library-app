@@ -8,7 +8,6 @@
 <link href="https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   :root{
     --ink:#1B2430;
@@ -158,34 +157,22 @@
     <!-- IDENTIFY (login landing page) -->
     <section class="screen" id="screen-identify">
       <h3 class="section-title">Sign in</h3>
-      <p class="section-sub">Choose how you'd like to check books in and out.</p>
-      <div id="googleBtnHolder" style="margin-bottom:12px;"></div>
-      <div id="fbBtnHolder" style="margin-bottom:12px;"></div>
-      <button class="btn btn-outline" onclick="showScreen('guest')">Sign in as a Guest</button>
-    </section>
-
-    <!-- GUEST DETAILS -->
-    <section class="screen" id="screen-guest">
-      <h3 class="section-title">Sign in as a guest</h3>
-      <p class="section-sub">This name is attached to borrow &amp; return records.</p>
+      <p class="section-sub">Enter the email or phone number on file to sign in.</p>
       <div class="field">
-        <label>Name</label>
-        <input type="text" id="guestName" placeholder="Your name">
+        <label>Email or phone</label>
+        <input type="text" id="loginQuery" placeholder="you@example.com or phone number">
       </div>
-      <div class="field">
-        <label>Phone or email</label>
-        <input type="text" id="guestContact" placeholder="For contacting about overdue books">
-      </div>
-      <button class="btn btn-primary" onclick="saveGuest()">Continue</button>
-      <button class="btn btn-outline" style="margin-top:10px;" onclick="showScreen('identify')">← Back</button>
+      <button class="btn btn-primary" onclick="signIn()">Continue</button>
+      <p class="section-sub" id="signInError" style="margin-top:10px;color:#e8998a;"></p>
     </section>
 
     <!-- SCAN -->
     <section class="screen" id="screen-scan">
       <div class="scan-hero">
         <h1>Scan a book</h1>
-        <p>One scan requests to borrow it — an admin approves in the Sheet. Scan the same book again to return it.</p>
+        <p>One scan requests to borrow it — an admin approves it. Scan the same book again to return it.</p>
       </div>
+      <p class="section-sub" id="scanIdentityBanner" style="text-align:center;"></p>
       <button class="btn btn-primary" id="scanBtn" onclick="toggleScanner()">Start scanning</button>
       <div id="reader" style="display:none;"></div>
       <div id="resultArea"></div>
@@ -237,12 +224,26 @@
       <div id="approvalsList"></div>
     </section>
 
+    <!-- USERS (admin only) -->
+    <section class="screen" id="screen-users">
+      <h3 class="section-title">User list</h3>
+      <p class="section-sub" id="usersCount">Loading…</p>
+      <div class="field">
+        <label>Search</label>
+        <input type="text" id="usersSearch" placeholder="Search by class, name, parent, email, or phone" oninput="renderUsersList()">
+      </div>
+      <button class="btn btn-ghost" onclick="loadUsers()">Refresh</button>
+      <div class="divider"></div>
+      <div id="usersList"></div>
+    </section>
+
   </main>
 
   <nav class="bottom">
     <button id="nav-scan" onclick="showScreen('scan')">Scan</button>
     <button id="nav-shelf" onclick="showScreen('shelf')">Shelf</button>
     <button id="nav-approvals" onclick="showScreen('approvals')">Approvals</button>
+    <button id="nav-users" onclick="showScreen('users')">Users</button>
   </nav>
 </div>
 
@@ -251,6 +252,7 @@ const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbwRnC0_y_zvejQq
 let CONFIG = JSON.parse(localStorage.getItem('stacks_config') || '{}');
 if(!CONFIG.apiUrl){ CONFIG.apiUrl = DEFAULT_API_URL; }
 let USER = JSON.parse(localStorage.getItem('stacks_user') || 'null');
+let ACTING_AS = null; // admin temporarily scanning on behalf of a chosen User List row
 let html5QrCode = null;
 let scanning = false;
 let bookCache = [];
@@ -260,7 +262,7 @@ const APPROVAL_POLL_INTERVAL_MS = 4000;
 const APPROVAL_POLL_MAX_ATTEMPTS = 45; // ~3 minutes
 
 function showScreen(name){
-  if((name==='shelf' || name==='approvals') && !(USER && USER.isAdmin)) name = 'scan';
+  if((name==='shelf' || name==='approvals' || name==='users') && !(USER && USER.isAdmin)) name = 'scan';
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('nav.bottom button').forEach(b=>b.classList.remove('active'));
   const el = document.getElementById('screen-'+name);
@@ -269,28 +271,65 @@ function showScreen(name){
   if(nav) nav.classList.add('active');
   if(name==='shelf') loadShelf();
   if(name==='approvals') loadApprovals();
-  if(name==='identify'){ renderGoogleButton(); renderFbButton(); }
+  if(name==='users') loadUsers();
+  if(name==='scan') updateScanIdentityBanner();
 }
 
 async function init(){
   updateWhoBadge();
   await loadRemoteConfig();
   if(!USER){ showScreen('identify'); return; }
-  await checkAdminStatus();
+  await refreshUserMatch();
   showScreen('scan');
 }
 
-async function checkAdminStatus(){
-  if(!USER || !USER.contact){ applyAdminUI(false); return; }
+// Re-runs the same lookup used at sign-in, using the value they
+// originally typed, so admin status and (for a parent) the list of
+// children stay fresh across reloads without asking them to sign in
+// again. Keeps the last-known USER if the sheet can't be reached.
+async function refreshUserMatch(){
+  if(!USER || !USER.loginQuery){ applyAdminUI(!!(USER && USER.isAdmin)); return; }
   try{
-    const res = await fetch(CONFIG.apiUrl + '?action=checkAdmin&email=' + encodeURIComponent(USER.contact));
+    const res = await fetch(CONFIG.apiUrl + '?action=matchUser&query=' + encodeURIComponent(USER.loginQuery));
     const data = await res.json();
-    USER.isAdmin = !!data.isAdmin;
-    localStorage.setItem('stacks_user', JSON.stringify(USER));
-  }catch(e){
-    USER.isAdmin = false;
+    if(!data.error){
+      USER = buildUserFromMatch_(USER.loginQuery, data);
+      localStorage.setItem('stacks_user', JSON.stringify(USER));
+    }
+  }catch(e){ /* offline — keep last-known USER state */ }
+  applyAdminUI(!!USER.isAdmin);
+}
+
+function buildUserFromMatch_(query, data){
+  if(data.matchType === 'single'){
+    return {
+      mode: 'roster', matchType: 'single', loginQuery: query,
+      name: data.user.name, contact: contactOf_(data.user), class: data.user.class,
+      isAdmin: !!data.isAdmin
+    };
   }
-  applyAdminUI(USER.isAdmin);
+  return { mode: 'roster', matchType: 'parent', loginQuery: query, children: data.children, isAdmin: !!data.isAdmin };
+}
+
+function contactOf_(u){ return u.email || u.phone || ''; }
+
+async function signIn(){
+  const query = document.getElementById('loginQuery').value.trim();
+  const errEl = document.getElementById('signInError');
+  errEl.textContent = '';
+  if(!query){ errEl.textContent = 'Enter an email or phone number.'; return; }
+  try{
+    const res = await fetch(CONFIG.apiUrl + '?action=matchUser&query=' + encodeURIComponent(query));
+    const data = await res.json();
+    if(data.error){ errEl.textContent = data.error; return; }
+    USER = buildUserFromMatch_(query, data);
+    localStorage.setItem('stacks_user', JSON.stringify(USER));
+    updateWhoBadge();
+    applyAdminUI(USER.isAdmin);
+    showScreen('scan');
+  }catch(e){
+    errEl.textContent = 'Could not reach the sheet. Check your connection and try again.';
+  }
 }
 
 function applyAdminUI(isAdmin){
@@ -298,17 +337,17 @@ function applyAdminUI(isAdmin){
   if(shelfNav) shelfNav.style.display = isAdmin ? '' : 'none';
   const approvalsNav = document.getElementById('nav-approvals');
   if(approvalsNav) approvalsNav.style.display = isAdmin ? '' : 'none';
+  const usersNav = document.getElementById('nav-users');
+  if(usersNav) usersNav.style.display = isAdmin ? '' : 'none';
 }
 
 async function loadRemoteConfig(){
   try{
     const res = await fetch(CONFIG.apiUrl + '?action=getConfig');
     const data = await res.json();
-    CONFIG.googleClientId = data.GoogleClientId || '';
-    CONFIG.fbAppId = data.FacebookAppId || '';
     CONFIG.loanDays = parseInt(data.LoanDays, 10) || 14;
   }catch(e){
-    console.warn('Could not load sign-in config from the sheet', e);
+    console.warn('Could not load config from the sheet', e);
   }
 }
 
@@ -323,118 +362,28 @@ function handleWhoBadgeClick(){
 
 function logout(){
   USER = null;
+  ACTING_AS = null;
   localStorage.removeItem('stacks_user');
   updateWhoBadge();
   applyAdminUI(false);
   showScreen('identify');
 }
 
-async function saveGuest(){
-  const name = document.getElementById('guestName').value.trim();
-  const contact = document.getElementById('guestContact').value.trim();
-  if(!name){ alert('Enter your name.'); return; }
-  USER = { name, contact, mode:'guest' };
-  localStorage.setItem('stacks_user', JSON.stringify(USER));
-  updateWhoBadge();
-  await checkAdminStatus();
-  showScreen('scan');
-}
-
-function renderGoogleButton(){
-  const holder = document.getElementById('googleBtnHolder');
-  holder.innerHTML = '';
-  if(!CONFIG.googleClientId){ return; }
-  const btn = document.createElement('button');
-  btn.className = 'btn btn-outline';
-  btn.textContent = 'Sign in with Google';
-  btn.onclick = signInWithGoogle;
-  holder.appendChild(btn);
-}
-
-let googleTokenClient = null;
-
-function signInWithGoogle(){
-  if(!window.google || !google.accounts || !google.accounts.oauth2){
-    alert('Google sign-in unavailable, try again in a moment or use guest mode.');
-    return;
-  }
-  if(!googleTokenClient){
-    googleTokenClient = google.accounts.oauth2.initTokenClient({
-      client_id: CONFIG.googleClientId,
-      scope: 'email',
-      callback: handleGoogleToken
-    });
-  }
-  googleTokenClient.requestAccessToken();
-}
-
-async function handleGoogleToken(resp){
-  if(resp.error){ alert('Google sign-in failed, try guest mode.'); return; }
-  try{
-    const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-      headers: { Authorization: 'Bearer ' + resp.access_token }
-    });
-    const profile = await r.json();
-    if(!profile.email){ alert('Google sign-in failed, try guest mode.'); return; }
-    USER = { name: profile.email, contact: profile.email, mode:'google' };
-    localStorage.setItem('stacks_user', JSON.stringify(USER));
-    updateWhoBadge();
-    await checkAdminStatus();
-    showScreen('scan');
-  }catch(e){
-    console.warn('Google sign-in unavailable', e);
-    alert('Google sign-in failed, try guest mode.');
+function updateScanIdentityBanner(){
+  const el = document.getElementById('scanIdentityBanner');
+  if(!el) return;
+  if(ACTING_AS){
+    el.innerHTML = 'Scanning as <strong>'+escapeHtml(ACTING_AS.name)+'</strong> · <a class="linklike" style="cursor:pointer;" onclick="clearActingAs()">Stop</a>';
+  } else if(USER && USER.matchType === 'parent'){
+    el.textContent = "Signed in as a parent — you'll pick a child when borrowing.";
+  } else {
+    el.textContent = '';
   }
 }
 
-function renderFbButton(){
-  const holder = document.getElementById('fbBtnHolder');
-  holder.innerHTML = '';
-  if(!CONFIG.fbAppId){ return; }
-  const btn = document.createElement('button');
-  btn.className = 'btn btn-outline';
-  btn.textContent = 'Sign in with Facebook';
-  btn.onclick = signInWithFacebook;
-  holder.appendChild(btn);
-}
-
-function loadFacebookSdk(){
-  return new Promise((resolve, reject)=>{
-    if(window.FB){ resolve(window.FB); return; }
-    let js = document.getElementById('fb-jssdk');
-    if(!js){
-      js = document.createElement('script');
-      js.id = 'fb-jssdk';
-      js.src = 'https://connect.facebook.net/en_US/sdk.js';
-      js.onerror = () => reject(new Error('Facebook SDK failed to load'));
-      document.body.appendChild(js);
-    }
-    js.addEventListener('load', () => resolve(window.FB));
-  });
-}
-
-async function signInWithFacebook(){
-  try{
-    const FB = await loadFacebookSdk();
-    FB.init({ appId: CONFIG.fbAppId, cookie:true, xfbml:false, version:'v19.0' });
-    FB.login((resp)=>{
-      if(resp.authResponse){
-        FB.api('/me', { fields:'email' }, async (profile)=>{
-          if(!profile.email){ alert('Facebook sign-in failed — no email permission granted. Try guest mode.'); return; }
-          USER = { name: profile.email, contact: profile.email, mode:'facebook' };
-          localStorage.setItem('stacks_user', JSON.stringify(USER));
-          updateWhoBadge();
-          await checkAdminStatus();
-          showScreen('scan');
-        });
-      } else {
-        alert('Facebook sign-in was cancelled.');
-      }
-    }, { scope: 'email' });
-  }catch(e){
-    console.warn('Facebook sign-in unavailable', e);
-    alert('Facebook sign-in failed, try guest mode.');
-  }
+function clearActingAs(){
+  ACTING_AS = null;
+  updateScanIdentityBanner();
 }
 
 async function toggleScanner(){
@@ -471,18 +420,72 @@ async function onScanSuccess(decodedText){
   processScan(decodedText.trim());
 }
 
+// For a single-match user (or an admin acting as someone via the Users
+// screen), the identity to scan as is already known. For a parent match,
+// we don't know until we check whether this scan is a borrow (needs a
+// child picked) or a return (identity doesn't matter to the backend).
 async function processScan(itemId){
   stopApprovalPolling();
+  const area = document.getElementById('resultArea');
+
+  if(ACTING_AS){
+    await doScan(itemId, ACTING_AS.name, ACTING_AS.contact);
+    return;
+  }
+  if(USER.matchType === 'parent'){
+    area.innerHTML = '<p style="opacity:0.6;font-family:JetBrains Mono,monospace;font-size:12px;">Checking book…</p>';
+    try{
+      const res = await fetch(CONFIG.apiUrl + '?action=lookup&itemId=' + encodeURIComponent(itemId));
+      const data = await res.json();
+      if(data.error){
+        area.innerHTML = '<div class="error-card">'+escapeHtml(data.error)+' (scanned ID: '+escapeHtml(itemId)+')</div>';
+        return;
+      }
+      if((data.status || 'Available') === 'Available'){
+        renderChildPicker(itemId, data.title);
+        return;
+      }
+      // Return, or already pending — the backend ignores name/contact for
+      // both of those, so any of the matched children works as a placeholder.
+      const placeholder = USER.children[0];
+      await doScan(itemId, placeholder.name, contactOf_(placeholder));
+    }catch(e){
+      area.innerHTML = '<div class="error-card">Couldn\'t reach the sheet. Check your connection and try again.</div>';
+    }
+    return;
+  }
+  await doScan(itemId, USER.name, USER.contact);
+}
+
+function renderChildPicker(itemId, title){
+  const area = document.getElementById('resultArea');
+  area.innerHTML = `
+    <div class="stamp-card">
+      <div class="eyebrow">Who is this for?</div>
+      <h2>${escapeHtml(title)}</h2>
+      <div id="childPickerButtons" style="margin-top:14px;display:flex;flex-direction:column;gap:8px;"></div>
+    </div>`;
+  const holder = document.getElementById('childPickerButtons');
+  USER.children.forEach(child=>{
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-outline';
+    btn.textContent = child.name + (child.class ? ' ('+child.class+')' : '');
+    btn.onclick = () => doScan(itemId, child.name, contactOf_(child));
+    holder.appendChild(btn);
+  });
+}
+
+async function doScan(itemId, name, contact){
   const area = document.getElementById('resultArea');
   area.innerHTML = '<p style="opacity:0.6;font-family:JetBrains Mono,monospace;font-size:12px;">Updating sheet…</p>';
   try{
     const url = CONFIG.apiUrl + '?action=scan&itemId=' + encodeURIComponent(itemId)
-      + '&name=' + encodeURIComponent(USER.name)
-      + '&contact=' + encodeURIComponent(USER.contact || '');
+      + '&name=' + encodeURIComponent(name)
+      + '&contact=' + encodeURIComponent(contact || '');
     const res = await fetch(url);
     const data = await res.json();
     if(data.error){
-      area.innerHTML = '<div class="error-card">'+data.error+' (scanned ID: '+itemId+')</div>';
+      area.innerHTML = '<div class="error-card">'+escapeHtml(data.error)+' (scanned ID: '+escapeHtml(itemId)+')</div>';
       return;
     }
     if(data.action === 'pending'){
@@ -490,13 +493,13 @@ async function processScan(itemId){
       startApprovalPolling(data.requestId);
       return;
     }
-    renderStamp(data);
+    renderStamp(data, name);
   }catch(e){
     area.innerHTML = '<div class="error-card">Couldn\'t reach the sheet. Check your connection and try again.</div>';
   }
 }
 
-function renderStamp(data){
+function renderStamp(data, actingName){
   const area = document.getElementById('resultArea');
   const isBorrow = data.action === 'borrow';
   const stampClass = isBorrow ? 'borrow' : 'return';
@@ -506,7 +509,7 @@ function renderStamp(data){
     rows += detailRow('Borrower', data.borrowerName);
     rows += detailRow('Due back', new Date(data.dueDate).toLocaleDateString());
   } else {
-    rows += detailRow('Returned by', data.borrowerName || USER.name);
+    rows += detailRow('Returned by', data.borrowerName || actingName || '');
   }
   rows += detailRow('Item ID', data.itemId);
   area.innerHTML = `
@@ -609,7 +612,7 @@ async function loadApprovals(){
   const countEl = document.getElementById('approvalsCount');
   countEl.textContent = 'Loading…';
   try{
-    const res = await fetch(CONFIG.apiUrl + '?action=listApprovals&adminEmail=' + encodeURIComponent(USER.contact||''));
+    const res = await fetch(CONFIG.apiUrl + '?action=listApprovals&adminEmail=' + encodeURIComponent(USER.loginQuery||''));
     const data = await res.json();
     if(data.error){
       countEl.textContent = data.error;
@@ -655,7 +658,7 @@ async function approveOne(requestId){
     const dueInput = document.getElementById('due-'+requestId);
     const dueDate = dueInput ? dueInput.value : '';
     const url = CONFIG.apiUrl + '?action=approveRequest&requestId=' + encodeURIComponent(requestId)
-      + '&decision=Approve&adminEmail=' + encodeURIComponent(USER.contact||'')
+      + '&decision=Approve&adminEmail=' + encodeURIComponent(USER.loginQuery||'')
       + (dueDate ? '&dueDate=' + encodeURIComponent(dueDate) : '');
     const res = await fetch(url);
     const data = await res.json();
@@ -668,12 +671,58 @@ async function approveAllRequests(){
   if(!approvalsCache.length){ return; }
   if(!confirm('Approve all '+approvalsCache.length+' pending requests?')) return;
   try{
-    const url = CONFIG.apiUrl + '?action=approveAll&adminEmail=' + encodeURIComponent(USER.contact||'');
+    const url = CONFIG.apiUrl + '?action=approveAll&adminEmail=' + encodeURIComponent(USER.loginQuery||'');
     const res = await fetch(url);
     const data = await res.json();
     if(data.error){ alert(data.error); return; }
     loadApprovals();
   }catch(e){ alert('Could not approve all — check your connection and try again.'); }
+}
+
+let usersCache = [];
+
+async function loadUsers(){
+  const countEl = document.getElementById('usersCount');
+  countEl.textContent = 'Loading…';
+  try{
+    const res = await fetch(CONFIG.apiUrl + '?action=listUsers&adminEmail=' + encodeURIComponent(USER.loginQuery||''));
+    const data = await res.json();
+    if(data.error){
+      countEl.textContent = data.error;
+      usersCache = [];
+      renderUsersList();
+      return;
+    }
+    usersCache = data.users || [];
+    countEl.textContent = usersCache.length + ' users';
+    renderUsersList();
+  }catch(e){
+    countEl.textContent = 'Could not load — check your connection and try again.';
+  }
+}
+
+function renderUsersList(){
+  const listEl = document.getElementById('usersList');
+  const q = (document.getElementById('usersSearch').value || '').trim().toLowerCase();
+  const filtered = !q ? usersCache : usersCache.filter(u =>
+    [u.class, u.name, u.parent, u.email, u.phone].some(v => String(v||'').toLowerCase().includes(q))
+  );
+  listEl.innerHTML = filtered.map((u,i) => `
+    <div class="book-row">
+      <div class="meta">
+        <div class="title">${escapeHtml(u.name)}</div>
+        <div class="sub">${escapeHtml(u.class)}${u.parent?' · Parent: '+escapeHtml(u.parent):''}${u.email?' · '+escapeHtml(u.email):''}${u.phone?' · '+escapeHtml(u.phone):''}</div>
+      </div>
+      <button class="btn btn-primary btn-sm" data-idx="${i}">Use for scan</button>
+    </div>`).join('') || '<p style="opacity:0.6;font-size:13px;">No users match your search.</p>';
+  listEl.querySelectorAll('button[data-idx]').forEach(btn=>{
+    btn.onclick = () => actAsUser(filtered[Number(btn.dataset.idx)]);
+  });
+}
+
+function actAsUser(user){
+  ACTING_AS = { name: user.name, contact: contactOf_(user) };
+  showScreen('scan');
 }
 
 function nextItemId(){
