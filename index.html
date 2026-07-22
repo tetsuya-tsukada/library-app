@@ -704,17 +704,17 @@ async function scanCoverPhoto(evt){
   const file = evt.target.files && evt.target.files[0];
   if(!file) return;
   const statusEl = document.getElementById('ocrStatus');
-  statusEl.textContent = 'Loading text scanner…';
+  statusEl.textContent = 'Loading text scanner (first use downloads language data)…';
   try{
     const Tesseract = await loadTesseract();
     statusEl.textContent = 'Reading cover…';
-    const { data } = await Tesseract.recognize(file, 'eng');
+    const { data } = await Tesseract.recognize(file, 'jpn+eng');
     const guess = guessTitleAuthor_(data);
     if(guess.title) document.getElementById('newTitle').value = guess.title;
     if(guess.author) document.getElementById('newAuthor').value = guess.author;
     statusEl.textContent = guess.title
       ? 'Filled in from the photo — please double-check before adding.'
-      : 'Could not confidently read the cover — fill in manually.';
+      : 'Could not confidently read the cover — fill in manually. (Vertical Japanese text is not supported yet — horizontal text reads best.)';
   }catch(e){
     console.warn('OCR failed', e);
     statusEl.textContent = 'Could not read the photo — fill in manually.';
@@ -727,7 +727,7 @@ async function scanCoverPhoto(evt){
 function guessTitleAuthor_(ocrData){
   const lines = (ocrData.lines || [])
     .map(l => ({ text: (l.text||'').trim(), height: l.bbox ? (l.bbox.y1 - l.bbox.y0) : 0, confidence: l.confidence||0 }))
-    .filter(l => l.text.length > 1 && l.confidence > 40);
+    .filter(l => l.text.length > 0 && l.confidence > 40); // CJK titles can be a single short line
   if(!lines.length) return { title:'', author:'' };
   lines.sort((a,b) => b.height - a.height);
   const title = lines[0].text;
