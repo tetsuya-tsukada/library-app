@@ -604,7 +604,9 @@ function renderQr(elId, text){
 function printAllLabels(){
   if(!bookCache.length){ alert('Load the shelf first.'); return; }
   const w = window.open('', '_blank');
-  w.document.write(`<html><head><title>Library labels</title><style>
+  w.document.write(`<html><head><title>Library labels</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
     body{font-family:sans-serif;margin:0;padding:20px;}
     .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
     .lab{border:1px dashed #999;border-radius:4px;padding:10px;text-align:center;page-break-inside:avoid;}
@@ -616,16 +618,16 @@ function printAllLabels(){
   bookCache.forEach(b=>{
     const cell = w.document.createElement('div');
     cell.className='lab';
-    cell.innerHTML = `<div class="qr-${b.ItemID}"></div><div class="t">${b.Title}</div><div class="i">${b.ItemID}</div>`;
+    cell.innerHTML = `<div class="qr-${b.ItemID}"></div><div class="t">${escapeHtml(b.Title)}</div><div class="i">${escapeHtml(b.ItemID)}</div>`;
     g.appendChild(cell);
   });
-  setTimeout(()=>{
+  w.addEventListener('load', ()=>{
     bookCache.forEach(b=>{
       const holder = w.document.querySelector('.qr-'+b.ItemID.replace(/[^a-zA-Z0-9-]/g,''));
-      if(holder) new w.QRCode(holder, { text:b.ItemID, width:80, height:80 });
+      if(holder && w.QRCode) new w.QRCode(holder, { text:b.ItemID, width:80, height:80 });
     });
     setTimeout(()=>w.print(), 400);
-  }, 200);
+  });
 }
 
 init();
