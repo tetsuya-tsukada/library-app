@@ -257,6 +257,15 @@ function doGet(e) {
       case 'checkAdmin':
         result = { isAdmin: !!e.parameter.email && isAdmin_(e.parameter.email) };
         break;
+      case 'listApprovals':
+        result = listPendingApprovals(e.parameter.adminEmail);
+        break;
+      case 'approveRequest':
+        result = approveRequest(e.parameter.requestId, e.parameter.decision || 'Approve', e.parameter.adminEmail);
+        break;
+      case 'approveAll':
+        result = approveAllPending(e.parameter.adminEmail);
+        break;
       default:
         result = { error: 'Unknown action' };
     }
@@ -402,31 +411,84 @@ function onApprovalEdit(e) {
       return;
     }
 
-    const row = e.range.getRow();
-    const rowData = sh.getRange(row, 1, 1, 6).getValues()[0];
-    const itemId = rowData[2];
-    const title = rowData[3];
-    const requesterName = rowData[4];
-    const requesterContact = rowData[5];
-
-    const { sh: booksSh, data: books } = getBooksSheet_();
-    const bRow = findRow_(books, itemId);
-    const bookIsPending = bRow !== -1 && (books[bRow][3] || '') === 'Pending';
-
-    if (newValue === 'Approve' && bookIsPending) {
-      const now = new Date();
-      const due = new Date(now.getTime() + LOAN_DAYS * 24 * 60 * 60 * 1000);
-      booksSh.getRange(bRow + 1, 4, 1, 5).setValues([['Borrowed', requesterName, requesterContact || '', now, due]]);
-      logTx_(itemId, title, 'Borrow', requesterName, requesterContact);
-    } else if (newValue === 'Deny' && bookIsPending) {
-      booksSh.getRange(bRow + 1, 4, 1, 5).setValues([['Available', '', '', '', '']]);
-      logTx_(itemId, title, 'Deny', requesterName, requesterContact);
-    }
-
-    sh.getRange(row, 8, 1, 2).setValues([[email, new Date()]]);
+    applyApprovalDecision_(sh, e.range.getRow(), newValue, email);
   } catch (err) {
     SpreadsheetApp.getActive().toast('Approval processing error: ' + err.message, 'Error', 6);
   }
+}
+
+/**
+ * Shared by the Sheet's onEdit trigger and the web app's approve
+ * actions. `row` is the 1-indexed Approvals sheet row. Does not itself
+ * check admin status — callers must verify that first.
+ */
+function applyApprovalDecision_(sh, row, decision, adminEmail) {
+  const rowData = sh.getRange(row, 1, 1, 6).getValues()[0];
+  const itemId = rowData[2];
+  const title = rowData[3];
+  const requesterName = rowData[4];
+  const requesterContact = rowData[5];
+
+  const { sh: booksSh, data: books } = getBooksSheet_();
+  const bRow = findRow_(books, itemId);
+  const bookIsPending = bRow !== -1 && (books[bRow][3] || '') === 'Pending';
+
+  if (decision === 'Approve' && bookIsPending) {
+    const now = new Date();
+    const due = new Date(now.getTime() + LOAN_DAYS * 24 * 60 * 60 * 1000);
+    booksSh.getRange(bRow + 1, 4, 1, 5).setValues([['Borrowed', requesterName, requesterContact || '', now, due]]);
+    logTx_(itemId, title, 'Borrow', requesterName, requesterContact);
+  } else if (decision === 'Deny' && bookIsPending) {
+    booksSh.getRange(bRow + 1, 4, 1, 5).setValues([['Available', '', '', '', '']]);
+    logTx_(itemId, title, 'Deny', requesterName, requesterContact);
+  }
+
+  sh.getRange(row, APPROVAL_DECISION_COL, 1, 1).setValue(decision);
+  sh.getRange(row, 8, 1, 2).setValues([[adminEmail, new Date()]]);
+}
+
+function listPendingApprovals(adminEmail) {
+  if (!adminEmail || !isAdmin_(adminEmail)) return { error: 'Not authorized' };
+  const { data } = getApprovalsSheet_();
+  const approvals = [];
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][6] === 'Pending') {
+      approvals.push({
+        requestId: data[i][0],
+        timestamp: data[i][1],
+        itemId: data[i][2],
+        title: data[i][3],
+        requesterName: data[i][4],
+        requesterContact: data[i][5]
+      });
+    }
+  }
+  return { approvals };
+}
+
+function approveRequest(requestId, decision, adminEmail) {
+  if (!adminEmail || !isAdmin_(adminEmail)) return { error: 'Not authorized' };
+  if (decision !== 'Approve' && decision !== 'Deny') return { error: 'Invalid decision' };
+  if (!requestId) return { error: 'Missing requestId' };
+  const { sh, data } = getApprovalsSheet_();
+  const row = findApprovalRow_(data, requestId);
+  if (row === -1) return { error: 'Request not found' };
+  if (data[row][6] !== 'Pending') return { error: 'Request already decided' };
+  applyApprovalDecision_(sh, row + 1, decision, adminEmail);
+  return { ok: true, requestId, decision };
+}
+
+function approveAllPending(adminEmail) {
+  if (!adminEmail || !isAdmin_(adminEmail)) return { error: 'Not authorized' };
+  const { sh, data } = getApprovalsSheet_();
+  let approved = 0;
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][6] === 'Pending') {
+      applyApprovalDecision_(sh, i + 1, 'Approve', adminEmail);
+      approved++;
+    }
+  }
+  return { ok: true, approved };
 }
 
 function isAdmin_(email) {
