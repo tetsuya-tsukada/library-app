@@ -111,6 +111,12 @@ function setupConfigSheet() {
     sh = ss.insertSheet(CONFIG_SHEET);
     sh.appendRow(['Key', 'Value']);
     sh.setFrozenRows(1);
+  } else if (String(sh.getRange(1, 1).getValue()).trim() !== 'Key') {
+    // Tab already existed without the Key/Value header — insert one
+    // above the existing rows instead of clearing anything.
+    sh.insertRowBefore(1);
+    sh.getRange(1, 1, 1, 2).setValues([['Key', 'Value']]);
+    sh.setFrozenRows(1);
   }
   const data = sh.getDataRange().getValues();
   const existingKeys = {};
@@ -129,8 +135,12 @@ function getConfig() {
   const sh = getSS().getSheetByName(CONFIG_SHEET);
   if (!sh) return {};
   const data = sh.getDataRange().getValues();
+  if (!data.length) return {};
+  // Skip row 1 only if it's actually the Key/Value header — tolerates a
+  // Config tab that was created without one.
+  const startRow = String(data[0][0]).trim() === 'Key' ? 1 : 0;
   const cfg = {};
-  for (let i = 1; i < data.length; i++) {
+  for (let i = startRow; i < data.length; i++) {
     const key = String(data[i][0]).trim();
     if (key) cfg[key] = data[i][1];
   }
