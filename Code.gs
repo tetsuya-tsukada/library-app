@@ -9,32 +9,48 @@
  *    (if you opened it via Extensions > Apps Script from inside the
  *    sheet, you can leave SHEET_ID as '' — it will use the active sheet).
  * 5. Run `setupSheets` once from the editor (select it in the function
- *    dropdown, click Run). This creates the Books, Transactions, Admins
- *    and Approvals tabs with the right headers. Approve the permissions
- *    prompt.
- * 6. Add admin approvers: in the Admins tab, add one row per approver
- *    with their Google account email in column A.
- * 7. Run `installApprovalTrigger` once from the editor. This lets the
+ *    dropdown, click Run). This creates the Books, Transactions, Admins,
+ *    Approvals, and User List tabs with the right headers. Approve the
+ *    permissions prompt.
+ * 6. Fill in the "User List" tab: one row per person, columns Class,
+ *    Name, Parent, Email, Phone. This is the roster everyone signs in
+ *    against — there is no separate password. A row with no Parent is
+ *    treated as signing in for themself (e.g. staff/admins); a row
+ *    with a Parent name is a child, and whoever's Email/Phone is on
+ *    that row (typically the parent's own contact info, since kids
+ *    often don't have their own) can sign in as the parent and pick
+ *    which child a given scan is for. If the same Email/Phone value
+ *    appears on more than one row, signing in with it is treated as a
+ *    parent with that many children.
+ * 7. Add admin approvers: in the Admins tab, add one row per admin with
+ *    their email in column A — this must be the exact same email as
+ *    that admin's row in User List, since that's what they'll sign in
+ *    with.
+ * 8. Run `installApprovalTrigger` once from the editor. This lets the
  *    script notice when an admin changes a cell in the Approvals tab.
- * 8. Share the Sheet directly with each admin's Google account (Editor
- *    access). Admin approval enforcement identifies approvers by their
- *    signed-in email, so it will not work if the sheet is shared via an
+ * 9. Share the Sheet directly with each admin's Google account (Editor
+ *    access). Admin approval enforcement (when approving via the Sheet
+ *    itself, not the web app) identifies approvers by their signed-in
+ *    Google email, so it will not work if the sheet is shared via an
  *    "anyone with the link can edit" link instead of named accounts.
- * 9. Deploy > New deployment > type: Web app.
+ * 10. Deploy > New deployment > type: Web app.
  *      - Execute as: Me
  *      - Who has access: Anyone
- * 10. Copy the Web app URL — paste it into the scanner app's Settings.
- * 11. Add your books: run addBook manually a few times, OR just type
+ * 11. Copy the Web app URL — paste it into index.html's DEFAULT_API_URL
+ *    constant (there's no in-app Settings screen; the URL is hardcoded).
+ * 12. Add your books: run addBook manually a few times, OR just type
  *    rows directly into the Books tab (ItemID / Title / Author),
  *    leave Status blank — the app treats blank Status as Available.
- * 12. Run `setupConfigSheet` once. This creates a Config tab (Key/Value
- *    columns) pre-filled with a GoogleClientId row, a blank
- *    FacebookAppId row, and a LoanDays row (default 14). Edit any of
- *    these any time — the app reads this tab on every load, so there's
- *    no code change or redeploy needed to update them. Changing
- *    LoanDays changes the default due date for future approvals; it
- *    does not change books already borrowed.
- * 13. Reload the Google Sheet tab in your browser. A "📚 Library" menu
+ * 13. Run `setupConfigSheet` once. This creates a Config tab (Key/Value
+ *    columns) pre-filled with a LoanDays row (default 14) and a
+ *    MaxBorrowItems row (default 4). Edit either any time — the app
+ *    reads this tab on every load, so there's no code change or
+ *    redeploy needed to update them. Changing LoanDays changes the
+ *    default due date for future approvals only, not books already
+ *    borrowed. Changing MaxBorrowItems changes how many books someone
+ *    can have Borrowed or Pending at once before new borrow requests
+ *    are rejected.
+ * 14. Reload the Google Sheet tab in your browser. A "📚 Library" menu
  *    appears next to Help — use its "Print QR labels" item any time to
  *    generate a printable label sheet (title, item ID, and a scannable
  *    QR code per book) right from the Sheet. This does not require the
@@ -42,10 +58,27 @@
  *    the scanner app itself only shows a single label right after
  *    adding one book.
  *
+ * HOW SIGN-IN WORKS (no Google/Facebook login — everyone matches
+ * against the User List tab):
+ * - Someone types an email or phone number. The app looks it up against
+ *   every row's Email and Phone column.
+ * - Exactly one match: signed in as that row directly.
+ * - More than one match (shared contact info across siblings): signed
+ *   in as a parent — the app shows the matching child names and, each
+ *   time a borrow scan happens, asks which child it's for.
+ * - No match: rejected — there's no guest/fallback mode.
+ * - Whether someone is an admin is checked the same way as before:
+ *   their exact typed value is compared against the Admins tab. This
+ *   is a plain string match, not a verified identity — same trust
+ *   model as everything else in this app, fine for a small trusted
+ *   community but worth knowing if that ever changes.
+ *
  * HOW APPROVAL WORKS:
  * - When someone scans an available book to borrow it, the book's
  *   Status becomes "Pending" and a row is added to the Approvals tab
- *   with Decision = "Pending".
+ *   with Decision = "Pending" — unless that person already has
+ *   MaxBorrowItems books Borrowed or Pending, in which case the scan is
+ *   rejected up front.
  * - An admin opens the Approvals tab and changes that row's Decision
  *   cell to "Approve" or "Deny" (it's a dropdown). To hand out a
  *   non-default due date, type a date into that row's CustomDueDate
@@ -61,7 +94,8 @@
  *   LoanDays. If denied, the book goes back to "Available". Either way
  *   the scanning app — which polls automatically — updates within a
  *   few seconds.
- * - Returning a borrowed book is immediate and never needs approval.
+ * - Returning a borrowed book is immediate and never needs approval,
+ *   and is never blocked by the borrow limit.
  * -----------------------------------------------------
  */
 
@@ -71,7 +105,9 @@ const TX_SHEET = 'Transactions';
 const ADMINS_SHEET = 'Admins';
 const APPROVALS_SHEET = 'Approvals';
 const CONFIG_SHEET = 'Config';
+const USERS_SHEET = 'User List';
 const LOAN_DAYS = 14;
+const MAX_BORROW_ITEMS = 4;
 const APPROVAL_DECISION_COL = 7; // Approvals sheet: column G
 
 function getSS() {
@@ -112,6 +148,13 @@ function setupSheets() {
     approvals.getRange(1, 10).setValue('CustomDueDate');
   }
   applyApprovalValidation_(approvals, 2, 1000);
+
+  let users = ss.getSheetByName(USERS_SHEET);
+  if (!users) {
+    users = ss.insertSheet(USERS_SHEET);
+    users.appendRow(['Class', 'Name', 'Parent', 'Email', 'Phone']);
+    users.setFrozenRows(1);
+  }
 }
 
 function applyApprovalValidation_(sh, startRow, numRows) {
@@ -143,9 +186,8 @@ function setupConfigSheet() {
   for (let i = 1; i < data.length; i++) existingKeys[String(data[i][0]).trim()] = true;
 
   const defaults = {
-    GoogleClientId: '435945836681-isujj29uiqondhrep745igce7505bpqv.apps.googleusercontent.com',
-    FacebookAppId: '',
-    LoanDays: String(LOAN_DAYS)
+    LoanDays: String(LOAN_DAYS),
+    MaxBorrowItems: String(MAX_BORROW_ITEMS)
   };
   Object.keys(defaults).forEach(key => {
     if (!existingKeys[key]) sh.appendRow([key, defaults[key]]);
@@ -159,6 +201,13 @@ function getLoanDays_() {
   const cfg = getConfig();
   const days = parseInt(cfg.LoanDays, 10);
   return (!isNaN(days) && days > 0) ? days : LOAN_DAYS;
+}
+
+// Same fallback treatment as getLoanDays_(), for the per-person borrow cap.
+function getMaxBorrowItems_() {
+  const cfg = getConfig();
+  const max = parseInt(cfg.MaxBorrowItems, 10);
+  return (!isNaN(max) && max > 0) ? max : MAX_BORROW_ITEMS;
 }
 
 function getConfig() {
@@ -277,8 +326,11 @@ function doGet(e) {
       case 'getConfig':
         result = getConfig();
         break;
-      case 'checkAdmin':
-        result = { isAdmin: !!e.parameter.email && isAdmin_(e.parameter.email) };
+      case 'matchUser':
+        result = matchUser(e.parameter.query);
+        break;
+      case 'listUsers':
+        result = listUsers(e.parameter.adminEmail);
         break;
       case 'listApprovals':
         result = listPendingApprovals(e.parameter.adminEmail);
@@ -340,6 +392,11 @@ function scanBook(itemId, name, contact) {
   if (currentStatus === 'Available') {
     // BORROW REQUEST — locks the book as Pending until an admin approves it
     if (!name) return { error: 'Name required to borrow' };
+    const maxItems = getMaxBorrowItems_();
+    const activeCount = countActiveLoans_(name);
+    if (activeCount >= maxItems) {
+      return { error: 'Borrow limit reached (' + maxItems + ' items). Return a book before borrowing another.' };
+    }
     const requestId = itemId + '-' + now.getTime();
     sh.getRange(rowNum, 4, 1, 5).setValues([['Pending', name, contact || '', now, '']]);
     appendApprovalRequest_(requestId, itemId, title, name, contact);
@@ -356,6 +413,24 @@ function scanBook(itemId, name, contact) {
     logTx_(itemId, title, 'Return', prevName, prevContact);
     return { action: 'return', itemId, title, borrowerName: prevName };
   }
+}
+
+// Books currently Borrowed or Pending under this name, counted against
+// MaxBorrowItems before a new borrow request is allowed. Deliberately
+// keyed on name rather than contact: siblings signing in as a parent
+// share the same phone/email, so counting by contact would pool the
+// whole family into one limit instead of giving each child their own.
+function countActiveLoans_(name) {
+  const target = String(name || '').trim().toLowerCase();
+  if (!target) return 0;
+  const { data } = getBooksSheet_();
+  let count = 0;
+  for (let i = 1; i < data.length; i++) {
+    const status = data[i][3];
+    const bName = String(data[i][4] || '').trim().toLowerCase();
+    if ((status === 'Borrowed' || status === 'Pending') && bName === target) count++;
+  }
+  return count;
 }
 
 function logTx_(itemId, title, action, name, contact) {
@@ -539,6 +614,53 @@ function isAdmin_(email) {
     if (String(data[i][0]).trim().toLowerCase() === target) return true;
   }
   return false;
+}
+
+function getUsersSheet_() {
+  const sh = getSS().getSheetByName(USERS_SHEET);
+  const data = sh.getDataRange().getValues();
+  return { sh, data, header: data[0] };
+}
+
+function userRowToObject_(row) {
+  return { class: row[0] || '', name: row[1] || '', parent: row[2] || '', email: row[3] || '', phone: row[4] || '' };
+}
+
+/**
+ * Sign-in: looks up `query` (whatever the person typed) against every
+ * row's Email and Phone column. One match signs in as that row
+ * directly; more than one match (siblings sharing a parent's contact
+ * info) is treated as a parent, returning every matching child for the
+ * app to let them pick per scan. isAdmin compares the raw query itself
+ * against the Admins tab, same plain-string check used everywhere else
+ * in this app — not a verified identity.
+ */
+function matchUser(query) {
+  const target = String(query || '').trim().toLowerCase();
+  if (!target) return { error: 'Enter an email or phone number' };
+  const { data } = getUsersSheet_();
+  const matches = [];
+  for (let i = 1; i < data.length; i++) {
+    const email = String(data[i][3] || '').trim().toLowerCase();
+    const phone = String(data[i][4] || '').trim().toLowerCase();
+    if ((email && email === target) || (phone && phone === target)) {
+      matches.push(userRowToObject_(data[i]));
+    }
+  }
+  if (!matches.length) return { error: 'No matching user found' };
+  const isAdmin = isAdmin_(query);
+  if (matches.length === 1) {
+    return { matchType: 'single', user: matches[0], isAdmin };
+  }
+  return { matchType: 'parent', children: matches, isAdmin };
+}
+
+function listUsers(adminEmail) {
+  if (!adminEmail || !isAdmin_(adminEmail)) return { error: 'Not authorized' };
+  const { data } = getUsersSheet_();
+  const users = [];
+  for (let i = 1; i < data.length; i++) users.push(userRowToObject_(data[i]));
+  return { users };
 }
 
 function listBooks() {
