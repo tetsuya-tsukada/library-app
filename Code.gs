@@ -32,6 +32,13 @@
  *    FacebookAppId row. Edit those values any time to change or add
  *    social sign-in credentials — the app reads this tab on every load,
  *    so there's no code change or redeploy needed to update them.
+ * 13. Reload the Google Sheet tab in your browser. A "📚 Library" menu
+ *    appears next to Help — use its "Print QR labels" item any time to
+ *    generate a printable label sheet (title, item ID, and a scannable
+ *    QR code per book) right from the Sheet. This does not require the
+ *    web app at all, and is the only place labels are printed from —
+ *    the scanner app itself only shows a single label right after
+ *    adding one book.
  *
  * HOW APPROVAL WORKS:
  * - When someone scans an available book to borrow it, the book's
@@ -157,6 +164,69 @@ function installApprovalTrigger() {
     .onEdit()
     .create();
 }
+
+// Simple trigger — runs automatically whenever the Sheet is opened, no
+// installable trigger needed. Adds the menu used to print QR labels.
+function onOpen(e) {
+  SpreadsheetApp.getUi()
+    .createMenu('📚 Library')
+    .addItem('Print QR labels', 'openPrintLabelsDialog')
+    .addToUi();
+}
+
+function openPrintLabelsDialog() {
+  const { books } = listBooks();
+  const items = books.map(b => ({ itemId: String(b.ItemID || ''), title: String(b.Title || '') }));
+  // Guard against breaking out of the <script> tag if a title ever contained "</script".
+  const json = JSON.stringify(items).replace(/</g, '\\u003c');
+  const template = HtmlService.createTemplate(PRINT_LABELS_HTML);
+  template.booksJson = json;
+  const html = template.evaluate().setWidth(760).setHeight(600);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Print QR labels');
+}
+
+const PRINT_LABELS_HTML = `<!DOCTYPE html>
+<html><head>
+<base target="_top">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  body{font-family:sans-serif;margin:0;padding:16px;}
+  .toolbar{margin-bottom:14px;}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
+  .lab{border:1px dashed #999;border-radius:4px;padding:10px;text-align:center;page-break-inside:avoid;}
+  .lab .t{font-size:11px;font-weight:600;margin:6px 0 2px;line-height:1.2;}
+  .lab .i{font-family:monospace;font-size:9px;color:#666;}
+  @media print { .toolbar{ display:none; } }
+</style>
+</head>
+<body>
+  <div class="toolbar"><button onclick="window.print()">Print</button></div>
+  <div class="grid" id="g"></div>
+  <script>
+    const books = <?!= booksJson ?>;
+    const g = document.getElementById('g');
+    books.forEach(b => {
+      const cell = document.createElement('div');
+      cell.className = 'lab';
+      const qr = document.createElement('div');
+      qr.className = 'qr-' + b.itemId.replace(/[^a-zA-Z0-9-]/g, '');
+      const t = document.createElement('div');
+      t.className = 't';
+      t.textContent = b.title;
+      const i = document.createElement('div');
+      i.className = 'i';
+      i.textContent = b.itemId;
+      cell.appendChild(qr); cell.appendChild(t); cell.appendChild(i);
+      g.appendChild(cell);
+    });
+    window.addEventListener('load', () => {
+      books.forEach(b => {
+        const holder = document.querySelector('.qr-' + b.itemId.replace(/[^a-zA-Z0-9-]/g, ''));
+        if (holder && window.QRCode) new QRCode(holder, { text: b.itemId, width: 80, height: 80 });
+      });
+    });
+  </script>
+</body></html>`;
 
 function doGet(e) {
   const action = e.parameter.action;
