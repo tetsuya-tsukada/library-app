@@ -214,7 +214,7 @@
       <p class="section-sub">Printable QR label sheets are generated from the Google Sheet — open it and use the 📚 Library menu → Print QR labels.</p>
       <div class="field">
         <label>Search</label>
-        <input type="text" id="shelfSearch" placeholder="Search by title or author" oninput="renderBookList()">
+        <input type="text" id="shelfSearch" placeholder="Search by title, author, or borrower" oninput="renderBookList()">
       </div>
       <div id="bookList"></div>
     </section>
@@ -579,7 +579,9 @@ function renderBookList(){
   const listEl = document.getElementById('bookList');
   const q = (document.getElementById('shelfSearch').value || '').trim().toLowerCase();
   const filtered = !q ? bookCache : bookCache.filter(b =>
-    String(b.Title||'').toLowerCase().includes(q) || String(b.Author||'').toLowerCase().includes(q)
+    String(b.Title||'').toLowerCase().includes(q) ||
+    String(b.Author||'').toLowerCase().includes(q) ||
+    String(b.BorrowerName||'').toLowerCase().includes(q)
   );
   listEl.innerHTML = filtered.map(b=>{
     const pillClass = b.Status==='Borrowed' ? 'borrowed' : (b.Status==='Pending' ? 'pending' : 'avail');
