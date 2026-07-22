@@ -146,21 +146,6 @@
 
   <main>
 
-    <!-- SETTINGS -->
-    <section class="screen" id="screen-settings">
-      <h3 class="section-title">Sign-in setup</h3>
-      <p class="section-sub">Add your Google and Facebook app credentials to enable social sign-in below. Optional — guests can always continue without it.</p>
-      <div class="field">
-        <label>Google Sign-In Client ID (optional)</label>
-        <input type="text" id="googleClientId" placeholder="xxxx.apps.googleusercontent.com">
-      </div>
-      <div class="field">
-        <label>Facebook App ID (optional)</label>
-        <input type="text" id="fbAppId" placeholder="Facebook App ID">
-      </div>
-      <button class="btn btn-primary" onclick="saveSettings()">Save & continue</button>
-    </section>
-
     <!-- IDENTIFY (login landing page) -->
     <section class="screen" id="screen-identify">
       <h3 class="section-title">Sign in</h3>
@@ -168,9 +153,6 @@
       <div id="googleBtnHolder" style="margin-bottom:12px;"></div>
       <div id="fbBtnHolder" style="margin-bottom:12px;"></div>
       <button class="btn btn-outline" onclick="showScreen('guest')">Sign in as a Guest</button>
-      <p class="section-sub" style="text-align:center;margin:18px 0 0;">
-        <a class="linklike" style="cursor:pointer;" onclick="showScreen('settings')">Configure sign-in options</a>
-      </p>
     </section>
 
     <!-- GUEST DETAILS -->
@@ -231,7 +213,6 @@
   <nav class="bottom">
     <button id="nav-scan" onclick="showScreen('scan')">Scan</button>
     <button id="nav-shelf" onclick="showScreen('shelf')">Shelf</button>
-    <button id="nav-settings" onclick="showScreen('settings')">Settings</button>
   </nav>
 </div>
 
@@ -259,12 +240,22 @@ function showScreen(name){
   if(name==='identify'){ renderGoogleButton(); renderFbButton(); }
 }
 
-function init(){
-  document.getElementById('googleClientId').value = CONFIG.googleClientId || '';
-  document.getElementById('fbAppId').value = CONFIG.fbAppId || '';
+async function init(){
   updateWhoBadge();
+  await loadRemoteConfig();
   if(!USER){ showScreen('identify'); return; }
   showScreen('scan');
+}
+
+async function loadRemoteConfig(){
+  try{
+    const res = await fetch(CONFIG.apiUrl + '?action=getConfig');
+    const data = await res.json();
+    CONFIG.googleClientId = data.GoogleClientId || '';
+    CONFIG.fbAppId = data.FacebookAppId || '';
+  }catch(e){
+    console.warn('Could not load sign-in config from the sheet', e);
+  }
 }
 
 function updateWhoBadge(){
@@ -280,13 +271,6 @@ function logout(){
   USER = null;
   localStorage.removeItem('stacks_user');
   updateWhoBadge();
-  showScreen('identify');
-}
-
-function saveSettings(){
-  CONFIG.googleClientId = document.getElementById('googleClientId').value.trim();
-  CONFIG.fbAppId = document.getElementById('fbAppId').value.trim();
-  localStorage.setItem('stacks_config', JSON.stringify(CONFIG));
   showScreen('identify');
 }
 
