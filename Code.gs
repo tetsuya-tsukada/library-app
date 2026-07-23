@@ -121,6 +121,14 @@
  *   few seconds.
  * - Returning a borrowed book is immediate and never needs approval,
  *   and is never blocked by the borrow limit.
+ * - Exception: when an admin (signed in through the separate admin
+ *   login) is the one doing the scanning — whether for themself or,
+ *   via the Users screen's "Use for scan", on behalf of a patron they
+ *   looked up — the borrow is approved immediately instead of going
+ *   to Pending. An admin scanning a book is already the same
+ *   authority that would otherwise approve it moments later, so
+ *   there's no separate approval step to skip. The borrow limit
+ *   check still applies.
  * -----------------------------------------------------
  */
 
@@ -394,7 +402,7 @@ function doGet(e) {
         result = lookupBook(e.parameter.itemId);
         break;
       case 'scan':
-        result = scanBook(e.parameter.itemId, e.parameter.name, e.parameter.contact);
+        result = scanBook(e.parameter.itemId, e.parameter.name, e.parameter.contact, e.parameter.adminEmail);
         break;
       case 'list':
         result = listBooks();
@@ -469,7 +477,12 @@ function lookupBook(itemId) {
   };
 }
 
-function scanBook(itemId, name, contact) {
+// adminEmail (optional): when set and listed in the Admins tab, a borrow is
+// approved immediately instead of going to Pending — an admin scanning a
+// book (for themself or, via "Use for scan", for a patron they looked up)
+// is already the same authority that would otherwise approve it a moment
+// later, so the extra Pending round-trip is just friction.
+function scanBook(itemId, name, contact, adminEmail) {
   if (!itemId) return { error: 'Missing itemId' };
   const { sh, data } = getBooksSheet_();
   const row = findRow_(data, itemId);
@@ -479,14 +492,22 @@ function scanBook(itemId, name, contact) {
   const currentStatus = data[row][3] || 'Available';
   const now = new Date();
   const rowNum = row + 1; // 1-indexed for sheet API
+  const isAdminScan = !!adminEmail && isAdmin_(adminEmail);
 
   if (currentStatus === 'Available') {
     // BORROW REQUEST — locks the book as Pending until an admin approves it
+    // (skipped entirely for an admin-initiated scan, see isAdminScan above)
     if (!name) return { error: 'Name required to borrow' };
     const maxItems = getMaxBorrowItems_();
     const activeCount = countActiveLoans_(name);
     if (activeCount >= maxItems) {
       return { error: 'Borrow limit reached (' + maxItems + ' items). Return a book before borrowing another.' };
+    }
+    if (isAdminScan) {
+      const due = new Date(now.getTime() + getLoanDays_() * 24 * 60 * 60 * 1000);
+      sh.getRange(rowNum, 4, 1, 5).setValues([['Borrowed', name, contact || '', now, due]]);
+      logTx_(itemId, title, 'Borrow', name, contact);
+      return { action: 'borrow', itemId, title, borrowerName: name, dueDate: due };
     }
     const requestId = itemId + '-' + now.getTime();
     sh.getRange(rowNum, 4, 1, 5).setValues([['Pending', name, contact || '', now, '']]);
