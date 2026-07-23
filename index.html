@@ -105,6 +105,10 @@
   @keyframes stampIn{0%{transform:rotate(9deg) scale(2.4);opacity:0;}100%{transform:rotate(9deg) scale(1);opacity:1;}}
   .stamp-card .detail-row{display:flex;justify-content:space-between;font-size:13px;padding:7px 0;border-top:1px solid rgba(27,36,48,0.12);}
   .stamp-card .detail-row span:first-child{opacity:0.55;font-family:'JetBrains Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;}
+  /* .btn-outline defaults to light text/border for the app's dark
+     background — on the stamp-card's light background that's invisible
+     (light text on light card), so give it dark-on-light colors here. */
+  .stamp-card .btn-outline{background:transparent;color:var(--ink);border:1px solid rgba(27,36,48,0.3);}
 
   .error-card{background:rgba(178,65,47,0.15);border:1px solid var(--stamp-red);border-radius:6px;padding:16px;margin-top:16px;font-size:14px;}
 
