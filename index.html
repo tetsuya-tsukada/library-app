@@ -81,8 +81,19 @@
   .scan-hero{text-align:center;padding:30px 0 20px;}
   .scan-hero h1{font-family:'Zilla Slab',serif;font-size:28px;margin:0 0 6px;}
   .scan-hero p{opacity:0.65;font-size:14px;margin:0;}
-  #reader{border-radius:8px;overflow:hidden;border:1px solid var(--line);margin:16px 0;}
+  #readerWrap{position:relative;margin:16px 0;}
+  #reader{border-radius:8px;overflow:hidden;border:1px solid var(--line);}
   #reader video{border-radius:8px;}
+
+  .scan-toast{
+    position:absolute;left:50%;top:14px;transform:translateX(-50%) translateY(-8px);
+    background:rgba(20,26,34,0.92);color:#8fd6bd;border:1px solid rgba(143,214,189,0.4);
+    padding:8px 18px;border-radius:20px;font-family:'JetBrains Mono',monospace;
+    font-size:12px;letter-spacing:0.5px;white-space:nowrap;max-width:calc(100% - 40px);
+    overflow:hidden;text-overflow:ellipsis;
+    opacity:0;pointer-events:none;transition:opacity 0.15s ease,transform 0.15s ease;z-index:5;
+  }
+  .scan-toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 
   /* Stamp result card */
   .stamp-card{
@@ -207,7 +218,10 @@
       <p class="section-sub" id="scanIdentityBanner" style="text-align:center;"></p>
       <div id="myBooksSummary"></div>
       <button class="btn btn-primary" id="scanBtn" onclick="toggleScanner()">Start scanning</button>
-      <div id="reader" style="display:none;"></div>
+      <div id="readerWrap" style="display:none;">
+        <div id="reader"></div>
+        <div class="scan-toast" id="scanToast"></div>
+      </div>
       <p class="section-sub" id="scanNote" style="text-align:center;color:var(--gold);"></p>
       <div id="scanQueueList"></div>
       <div id="resultArea"></div>
@@ -498,7 +512,7 @@ function clearActingAs(){
 }
 
 async function toggleScanner(){
-  const reader = document.getElementById('reader');
+  const readerWrap = document.getElementById('readerWrap');
   const btn = document.getElementById('scanBtn');
   if(scanning){
     await stopScanningSession();
@@ -507,7 +521,7 @@ async function toggleScanner(){
   scanQueue = [];
   renderScanQueue();
   document.getElementById('resultArea').innerHTML = '';
-  reader.style.display='block';
+  readerWrap.style.display='block';
   btn.textContent='Done scanning';
   scanning=true;
   html5QrCode = new Html5Qrcode('reader');
@@ -519,15 +533,15 @@ async function toggleScanner(){
   ).catch(err=>{
     document.getElementById('resultArea').innerHTML =
       '<div class="error-card">Camera access failed: '+err+'</div>';
-    scanning=false; btn.textContent='Start scanning'; reader.style.display='none';
+    scanning=false; btn.textContent='Start scanning'; readerWrap.style.display='none';
   });
 }
 
 async function stopScanningSession(){
-  const reader = document.getElementById('reader');
+  const readerWrap = document.getElementById('readerWrap');
   const btn = document.getElementById('scanBtn');
   await html5QrCode.stop();
-  reader.style.display='none';
+  readerWrap.style.display='none';
   btn.textContent='Start scanning';
   scanning=false;
   if(scanQueue.length){
@@ -613,6 +627,7 @@ function pauseForChildPicker_(itemId, title){
 function addToQueue_(itemId, title, action, name, contact){
   scanQueue.push({ itemId, title, action, name, contact });
   renderScanQueue();
+  flashScanToast_((action === 'borrow' ? 'Borrow scanned — ' : 'Return scanned — ') + title);
 }
 
 function flashScanNote_(msg){
@@ -621,6 +636,17 @@ function flashScanNote_(msg){
   el.textContent = msg;
   clearTimeout(flashScanNote_.t);
   flashScanNote_.t = setTimeout(()=>{ el.textContent=''; }, 3000);
+}
+
+// Small popup laid over the camera view itself so a successful scan is
+// obvious without having to look away to the note/queue list below it.
+function flashScanToast_(msg){
+  const el = document.getElementById('scanToast');
+  if(!el) return;
+  el.textContent = '✓ ' + msg;
+  el.classList.add('show');
+  clearTimeout(flashScanToast_.t);
+  flashScanToast_.t = setTimeout(()=>{ el.classList.remove('show'); }, 1400);
 }
 
 function renderScanQueue(){
