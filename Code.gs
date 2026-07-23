@@ -717,6 +717,12 @@ function userRowToObject_(row) {
   return { class: row[0] || '', name: row[1] || '', parent1: row[2] || '', parent2: row[3] || '' };
 }
 
+// Normalized identity for a User List row, used to collapse an
+// accidentally duplicated row (same person entered twice) in searchUsers.
+function rowKey_(r) {
+  return [r.class, r.name, r.parent1, r.parent2].map(v => String(v || '').trim().toLowerCase()).join('|');
+}
+
 /**
  * Patron sign-in and the admin Users lookup both go through this: a
  * loose, case-insensitive substring match against
@@ -754,10 +760,18 @@ function searchUsers(query) {
   if (target.length < 2) return { candidates: [] };
   const { data } = getUsersSheet_();
   const rows = [];
+  const seenRows = {};
   for (let i = 1; i < data.length; i++) {
     const row = userRowToObject_(data[i]);
     const haystack = [row.class, row.name, row.parent1, row.parent2].join(' ').toLowerCase();
-    if (haystack.includes(target)) rows.push(row);
+    if (!haystack.includes(target)) continue;
+    // A hand-maintained roster can end up with an accidentally duplicated
+    // row (same person entered twice) — collapse exact duplicates so they
+    // don't show up as repeated cards.
+    const key = rowKey_(row);
+    if (seenRows[key]) continue;
+    seenRows[key] = true;
+    rows.push(row);
   }
   const limited = rows.slice(0, 25);
   const candidates = limited.map(r => ({ type: 'individual', class: r.class, name: r.name, parent1: r.parent1, parent2: r.parent2 }));
@@ -778,11 +792,16 @@ function searchUsers(query) {
   });
   Object.keys(parentGroups).forEach(key => {
     const group = parentGroups[key];
+    const seenChildren = {};
     for (let i = 1; i < data.length; i++) {
       const row = userRowToObject_(data[i]);
       const p1 = String(row.parent1 || '').trim().toLowerCase();
       const p2 = String(row.parent2 || '').trim().toLowerCase();
-      if (p1 === key || p2 === key) group.children.push(row);
+      if (p1 !== key && p2 !== key) continue;
+      const childKey = rowKey_(row);
+      if (seenChildren[childKey]) continue; // same duplicate-row guard as above
+      seenChildren[childKey] = true;
+      group.children.push(row);
     }
     candidates.push({ type: 'parent', name: group.displayName, children: group.children });
   });
