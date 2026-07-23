@@ -303,7 +303,7 @@ const PRINT_LABELS_HTML = `<!DOCTYPE html>
 <style>
   body{font-family:sans-serif;margin:0;padding:16px;}
   .toolbar{margin-bottom:14px;}
-  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
+  .grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;}
   /* flexbox, not text-align, because the QR library can render a block-
      level element (e.g. a <table> of modules) that text-align alone
      won't center */
