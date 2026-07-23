@@ -157,13 +157,13 @@
     <!-- IDENTIFY (login landing page) -->
     <section class="screen" id="screen-identify">
       <h3 class="section-title">Sign in</h3>
-      <p class="section-sub">Enter the email or phone number on file to sign in.</p>
+      <p class="section-sub">Start typing your name, email, or phone — pick your record from the list.</p>
       <div class="field">
-        <label>Email or phone</label>
-        <input type="text" id="loginQuery" placeholder="you@example.com or phone number">
+        <label>Name, email, or phone</label>
+        <input type="text" id="loginQuery" placeholder="Start typing…" oninput="onLoginSearchInput()">
       </div>
-      <button class="btn btn-primary" onclick="signIn()">Continue</button>
-      <p class="section-sub" id="signInError" style="margin-top:10px;color:#e8998a;"></p>
+      <p class="section-sub" id="signInStatus" style="color:#e8998a;"></p>
+      <div id="loginCandidates"></div>
     </section>
 
     <!-- SCAN -->
@@ -227,13 +227,11 @@
     <!-- USERS (admin only) -->
     <section class="screen" id="screen-users">
       <h3 class="section-title">User list</h3>
-      <p class="section-sub" id="usersCount">Loading…</p>
+      <p class="section-sub">Start typing to search by class, name, parent, email, or phone.</p>
       <div class="field">
         <label>Search</label>
-        <input type="text" id="usersSearch" placeholder="Search by class, name, parent, email, or phone" oninput="renderUsersList()">
+        <input type="text" id="usersSearch" placeholder="Start typing…" oninput="onUsersSearchInput()">
       </div>
-      <button class="btn btn-ghost" onclick="loadUsers()">Refresh</button>
-      <div class="divider"></div>
       <div id="usersList"></div>
     </section>
 
@@ -271,7 +269,10 @@ function showScreen(name){
   if(nav) nav.classList.add('active');
   if(name==='shelf') loadShelf();
   if(name==='approvals') loadApprovals();
-  if(name==='users') loadUsers();
+  if(name==='users'){
+    document.getElementById('usersSearch').value = '';
+    document.getElementById('usersList').innerHTML = '<p style="opacity:0.6;font-size:13px;">Type at least 2 characters to search.</p>';
+  }
   if(name==='scan') updateScanIdentityBanner();
 }
 
@@ -283,53 +284,95 @@ async function init(){
   showScreen('scan');
 }
 
-// Re-runs the same lookup used at sign-in, using the value they
+function debounce_(fn, wait){
+  let t;
+  return function(...args){
+    clearTimeout(t);
+    t = setTimeout(()=>fn.apply(this, args), wait);
+  };
+}
+
+function contactOf_(u){ return u.email || u.phone || ''; }
+
+// A parent has no row of their own — their "contact" for record-keeping
+// borrows the email/phone off their first listed child's row, since
+// that's the same info duplicated across all of them by convention.
+function buildUserFromCandidate_(query, candidate, isAdmin){
+  if(candidate.type === 'individual'){
+    return {
+      mode: 'roster', matchType: 'individual', loginQuery: query,
+      name: candidate.name, contact: contactOf_(candidate), class: candidate.class,
+      isAdmin: !!isAdmin
+    };
+  }
+  const firstChild = candidate.children && candidate.children[0];
+  return {
+    mode: 'roster', matchType: 'parent', loginQuery: query,
+    name: candidate.name, contact: firstChild ? contactOf_(firstChild) : '',
+    children: candidate.children, isAdmin: !!isAdmin
+  };
+}
+
+function completeSignIn_(user){
+  USER = user;
+  localStorage.setItem('stacks_user', JSON.stringify(USER));
+  updateWhoBadge();
+  applyAdminUI(USER.isAdmin);
+  showScreen('scan');
+}
+
+// Re-runs the same search used at sign-in, using the value they
 // originally typed, so admin status and (for a parent) the list of
 // children stay fresh across reloads without asking them to sign in
-// again. Keeps the last-known USER if the sheet can't be reached.
+// again. Keeps the last-known USER if the sheet can't be reached, or if
+// they no longer show up under that same query (e.g. removed from the
+// roster — better to keep working offline than to force a re-sign-in).
 async function refreshUserMatch(){
   if(!USER || !USER.loginQuery){ applyAdminUI(!!(USER && USER.isAdmin)); return; }
   try{
-    const res = await fetch(CONFIG.apiUrl + '?action=matchUser&query=' + encodeURIComponent(USER.loginQuery));
+    const res = await fetch(CONFIG.apiUrl + '?action=searchUsers&query=' + encodeURIComponent(USER.loginQuery));
     const data = await res.json();
-    if(!data.error){
-      USER = buildUserFromMatch_(USER.loginQuery, data);
+    const match = (data.candidates || []).find(c => c.type === USER.matchType && c.name === USER.name);
+    if(match){
+      USER = buildUserFromCandidate_(USER.loginQuery, match, data.isAdmin);
       localStorage.setItem('stacks_user', JSON.stringify(USER));
     }
   }catch(e){ /* offline — keep last-known USER state */ }
   applyAdminUI(!!USER.isAdmin);
 }
 
-function buildUserFromMatch_(query, data){
-  if(data.matchType === 'single'){
-    return {
-      mode: 'roster', matchType: 'single', loginQuery: query,
-      name: data.user.name, contact: contactOf_(data.user), class: data.user.class,
-      isAdmin: !!data.isAdmin
-    };
-  }
-  return { mode: 'roster', matchType: 'parent', loginQuery: query, children: data.children, isAdmin: !!data.isAdmin };
-}
-
-function contactOf_(u){ return u.email || u.phone || ''; }
-
-async function signIn(){
+const onLoginSearchInput = debounce_(async function(){
   const query = document.getElementById('loginQuery').value.trim();
-  const errEl = document.getElementById('signInError');
-  errEl.textContent = '';
-  if(!query){ errEl.textContent = 'Enter an email or phone number.'; return; }
+  const statusEl = document.getElementById('signInStatus');
+  const holder = document.getElementById('loginCandidates');
+  statusEl.textContent = '';
+  if(query.length < 2){ holder.innerHTML = ''; return; }
   try{
-    const res = await fetch(CONFIG.apiUrl + '?action=matchUser&query=' + encodeURIComponent(query));
+    const res = await fetch(CONFIG.apiUrl + '?action=searchUsers&query=' + encodeURIComponent(query));
     const data = await res.json();
-    if(data.error){ errEl.textContent = data.error; return; }
-    USER = buildUserFromMatch_(query, data);
-    localStorage.setItem('stacks_user', JSON.stringify(USER));
-    updateWhoBadge();
-    applyAdminUI(USER.isAdmin);
-    showScreen('scan');
+    renderLoginCandidates(data.candidates || [], query, !!data.isAdmin);
   }catch(e){
-    errEl.textContent = 'Could not reach the sheet. Check your connection and try again.';
+    statusEl.textContent = 'Could not reach the sheet. Check your connection and try again.';
   }
+}, 300);
+
+function renderLoginCandidates(candidates, query, isAdmin){
+  const holder = document.getElementById('loginCandidates');
+  if(!candidates.length){
+    holder.innerHTML = '<p style="opacity:0.6;font-size:13px;">No matches yet — keep typing, or check with an admin.</p>';
+    return;
+  }
+  holder.innerHTML = '';
+  candidates.forEach(c=>{
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-outline';
+    btn.style.marginBottom = '8px';
+    btn.textContent = c.type === 'individual'
+      ? c.name + (c.class ? ' ('+c.class+')' : '')
+      : c.name + ' (Parent of ' + c.children.map(ch=>ch.name).join(', ') + ')';
+    btn.onclick = () => completeSignIn_(buildUserFromCandidate_(query, c, isAdmin));
+    holder.appendChild(btn);
+  });
 }
 
 function applyAdminUI(isAdmin){
@@ -375,7 +418,7 @@ function updateScanIdentityBanner(){
   if(ACTING_AS){
     el.innerHTML = 'Scanning as <strong>'+escapeHtml(ACTING_AS.name)+'</strong> · <a class="linklike" style="cursor:pointer;" onclick="clearActingAs()">Stop</a>';
   } else if(USER && USER.matchType === 'parent'){
-    el.textContent = "Signed in as a parent — you'll pick a child when borrowing.";
+    el.textContent = 'Signed in as '+USER.name+' — pick a child (or yourself) when borrowing.';
   } else {
     el.textContent = '';
   }
@@ -473,6 +516,13 @@ function renderChildPicker(itemId, title){
     btn.onclick = () => doScan(itemId, child.name, contactOf_(child));
     holder.appendChild(btn);
   });
+  const selfBtn = document.createElement('button');
+  selfBtn.className = 'btn btn-primary';
+  selfBtn.textContent = 'Borrow for myself ('+USER.name+')';
+  // Tagged "(Parent)" so this can never collide with a child of the same
+  // name for the per-name borrow limit, and reads clearly in the Sheet.
+  selfBtn.onclick = () => doScan(itemId, USER.name + ' (Parent)', USER.contact);
+  holder.appendChild(selfBtn);
 }
 
 async function doScan(itemId, name, contact){
@@ -679,44 +729,43 @@ async function approveAllRequests(){
   }catch(e){ alert('Could not approve all — check your connection and try again.'); }
 }
 
-let usersCache = [];
-
-async function loadUsers(){
-  const countEl = document.getElementById('usersCount');
-  countEl.textContent = 'Loading…';
-  try{
-    const res = await fetch(CONFIG.apiUrl + '?action=listUsers&adminEmail=' + encodeURIComponent(USER.loginQuery||''));
-    const data = await res.json();
-    if(data.error){
-      countEl.textContent = data.error;
-      usersCache = [];
-      renderUsersList();
-      return;
-    }
-    usersCache = data.users || [];
-    countEl.textContent = usersCache.length + ' users';
-    renderUsersList();
-  }catch(e){
-    countEl.textContent = 'Could not load — check your connection and try again.';
-  }
-}
-
-function renderUsersList(){
+const onUsersSearchInput = debounce_(async function(){
+  const query = document.getElementById('usersSearch').value.trim();
   const listEl = document.getElementById('usersList');
-  const q = (document.getElementById('usersSearch').value || '').trim().toLowerCase();
-  const filtered = !q ? usersCache : usersCache.filter(u =>
-    [u.class, u.name, u.parent, u.email, u.phone].some(v => String(v||'').toLowerCase().includes(q))
-  );
-  listEl.innerHTML = filtered.map((u,i) => `
+  if(query.length < 2){
+    listEl.innerHTML = '<p style="opacity:0.6;font-size:13px;">Type at least 2 characters to search.</p>';
+    return;
+  }
+  listEl.innerHTML = '<p style="opacity:0.6;font-size:13px;">Searching…</p>';
+  try{
+    const res = await fetch(CONFIG.apiUrl + '?action=searchUsers&query=' + encodeURIComponent(query));
+    const data = await res.json();
+    renderUsersResults(data.candidates || []);
+  }catch(e){
+    listEl.innerHTML = '<div class="error-card">Could not reach the sheet. Check your connection and try again.</div>';
+  }
+}, 300);
+
+// Only individual rows are actionable here — an admin looking someone up
+// to scan on their behalf (e.g. a student with no phone) wants a specific
+// person, not the "parent of..." grouping shown on the sign-in page.
+function renderUsersResults(candidates){
+  const listEl = document.getElementById('usersList');
+  const individuals = candidates.filter(c => c.type === 'individual');
+  if(!individuals.length){
+    listEl.innerHTML = '<p style="opacity:0.6;font-size:13px;">No users match your search.</p>';
+    return;
+  }
+  listEl.innerHTML = individuals.map((u,i) => `
     <div class="book-row">
       <div class="meta">
         <div class="title">${escapeHtml(u.name)}</div>
         <div class="sub">${escapeHtml(u.class)}${u.parent?' · Parent: '+escapeHtml(u.parent):''}${u.email?' · '+escapeHtml(u.email):''}${u.phone?' · '+escapeHtml(u.phone):''}</div>
       </div>
       <button class="btn btn-primary btn-sm" data-idx="${i}">Use for scan</button>
-    </div>`).join('') || '<p style="opacity:0.6;font-size:13px;">No users match your search.</p>';
+    </div>`).join('');
   listEl.querySelectorAll('button[data-idx]').forEach(btn=>{
-    btn.onclick = () => actAsUser(filtered[Number(btn.dataset.idx)]);
+    btn.onclick = () => actAsUser(individuals[Number(btn.dataset.idx)]);
   });
 }
 

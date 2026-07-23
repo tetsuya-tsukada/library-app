@@ -58,20 +58,28 @@
  *    the scanner app itself only shows a single label right after
  *    adding one book.
  *
- * HOW SIGN-IN WORKS (no Google/Facebook login — everyone matches
- * against the User List tab):
- * - Someone types an email or phone number. The app looks it up against
- *   every row's Email and Phone column.
- * - Exactly one match: signed in as that row directly.
- * - More than one match (shared contact info across siblings): signed
- *   in as a parent — the app shows the matching child names and, each
- *   time a borrow scan happens, asks which child it's for.
- * - No match: rejected — there's no guest/fallback mode.
+ * HOW SIGN-IN WORKS (no Google/Facebook login, no password — everyone
+ * matches against the User List tab):
+ * - As someone types a name, email, or phone number (2+ characters),
+ *   the app live-searches every row's Class/Name/Parent/Email/Phone for
+ *   that substring and shows matching people to tap — not an exact
+ *   match, so "yuki" finds "Yuki Sato" and a partial phone number works
+ *   too. There's no guest/fallback mode; if you're not found, you're
+ *   not in the sheet yet.
+ * - Rows that share a Parent name also produce a "Parent of ..." option
+ *   alongside the individual children, so a parent can sign in as
+ *   themself (their own separate MaxBorrowItems allowance, tracked
+ *   under their own name) or pick a specific child — each borrow scan
+ *   asks which one it's for.
  * - Whether someone is an admin is checked the same way as before:
  *   their exact typed value is compared against the Admins tab. This
  *   is a plain string match, not a verified identity — same trust
  *   model as everything else in this app, fine for a small trusted
  *   community but worth knowing if that ever changes.
+ * - Since matching is loose, there's no separate "is this really you"
+ *   gate at sign-in — the safeguard against someone picking the wrong
+ *   or someone else's name is the existing borrow-approval step below,
+ *   which every borrow request already goes through regardless.
  *
  * HOW APPROVAL WORKS:
  * - When someone scans an available book to borrow it, the book's
@@ -326,11 +334,8 @@ function doGet(e) {
       case 'getConfig':
         result = getConfig();
         break;
-      case 'matchUser':
-        result = matchUser(e.parameter.query);
-        break;
-      case 'listUsers':
-        result = listUsers(e.parameter.adminEmail);
+      case 'searchUsers':
+        result = searchUsers(e.parameter.query);
         break;
       case 'listApprovals':
         result = listPendingApprovals(e.parameter.adminEmail);
@@ -627,40 +632,60 @@ function userRowToObject_(row) {
 }
 
 /**
- * Sign-in: looks up `query` (whatever the person typed) against every
- * row's Email and Phone column. One match signs in as that row
- * directly; more than one match (siblings sharing a parent's contact
- * info) is treated as a parent, returning every matching child for the
- * app to let them pick per scan. isAdmin compares the raw query itself
- * against the Admins tab, same plain-string check used everywhere else
- * in this app — not a verified identity.
+ * Sign-in and admin lookup both go through this: a loose, case-insensitive
+ * substring match against Class/Name/Parent/Email/Phone (not an exact
+ * match — "yuki" matches "Yuki Sato", a partial phone number matches
+ * the full one, etc). Every matching row is returned as an "individual"
+ * candidate. Rows that share a non-empty Parent value also produce one
+ * "parent" candidate per distinct parent name, listing every child
+ * under that parent (not just the ones this particular query matched),
+ * so a parent typing their own name/phone sees all their kids together
+ * and gets the option to sign in as themself instead of a specific child.
+ * isAdmin compares the raw query itself against the Admins tab, same
+ * plain-string check used everywhere else in this app — not a verified
+ * identity.
+ *
+ * SECURITY NOTE: this action is intentionally public (it's the sign-in
+ * entry point, called before anyone has proven who they are) and now
+ * does a loose substring match instead of requiring an exact
+ * email/phone. That means anyone who can reach the web app URL —
+ * published in this public repo's index.html — can enumerate rows of
+ * this roster (names, classes, parent names, emails, phone numbers)
+ * without signing in, by trying short/common substrings. The 2-
+ * character minimum and 25-result cap below raise the bar slightly but
+ * don't prevent a determined, scripted attempt. Worth knowing since
+ * this roster includes children's information — ask if you want this
+ * hardened further (e.g. withholding email/phone from the response, a
+ * longer minimum query, or rate limiting).
  */
-function matchUser(query) {
+function searchUsers(query) {
   const target = String(query || '').trim().toLowerCase();
-  if (!target) return { error: 'Enter an email or phone number' };
+  if (target.length < 2) return { candidates: [], isAdmin: false };
   const { data } = getUsersSheet_();
-  const matches = [];
+  const rows = [];
   for (let i = 1; i < data.length; i++) {
-    const email = String(data[i][3] || '').trim().toLowerCase();
-    const phone = String(data[i][4] || '').trim().toLowerCase();
-    if ((email && email === target) || (phone && phone === target)) {
-      matches.push(userRowToObject_(data[i]));
-    }
+    const row = userRowToObject_(data[i]);
+    const haystack = [row.class, row.name, row.parent, row.email, row.phone].join(' ').toLowerCase();
+    if (haystack.includes(target)) rows.push(row);
   }
-  if (!matches.length) return { error: 'No matching user found' };
-  const isAdmin = isAdmin_(query);
-  if (matches.length === 1) {
-    return { matchType: 'single', user: matches[0], isAdmin };
-  }
-  return { matchType: 'parent', children: matches, isAdmin };
-}
+  const limited = rows.slice(0, 25);
+  const candidates = limited.map(r => ({ type: 'individual', class: r.class, name: r.name, parent: r.parent, email: r.email, phone: r.phone }));
 
-function listUsers(adminEmail) {
-  if (!adminEmail || !isAdmin_(adminEmail)) return { error: 'Not authorized' };
-  const { data } = getUsersSheet_();
-  const users = [];
-  for (let i = 1; i < data.length; i++) users.push(userRowToObject_(data[i]));
-  return { users };
+  const parentNames = [];
+  limited.forEach(r => {
+    const p = String(r.parent || '').trim();
+    if (p && parentNames.indexOf(p) === -1) parentNames.push(p);
+  });
+  parentNames.forEach(parentName => {
+    const children = [];
+    for (let i = 1; i < data.length; i++) {
+      const row = userRowToObject_(data[i]);
+      if (String(row.parent || '').trim() === parentName) children.push(row);
+    }
+    candidates.push({ type: 'parent', name: parentName, children });
+  });
+
+  return { candidates, isAdmin: isAdmin_(query) };
 }
 
 function listBooks() {
