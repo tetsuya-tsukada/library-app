@@ -43,7 +43,7 @@
   }
   .who{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--paper);opacity:0.6;text-align:right;cursor:pointer;}
 
-  main{flex:1;padding:20px;padding-bottom:100px;}
+  main{flex:1;padding:20px;}
   .screen{display:none;}
   .screen.active{display:block;}
 
@@ -128,19 +128,19 @@
   .label .lt{font-size:11px;font-weight:600;line-height:1.2;margin-bottom:2px;}
   .label .li{font-family:'JetBrains Mono',monospace;font-size:9px;opacity:0.6;}
 
-  /* Bottom nav */
-  nav.bottom{
-    position:fixed;bottom:0;left:0;right:0;
-    background:var(--ink-2);border-top:1px solid var(--line);
-    max-width:480px;margin:0 auto;
+  /* Top nav — sits right under the header, not pinned to the bottom,
+     so the primary actions are immediately visible and reachable
+     without reaching down the screen (this app is used by kids too). */
+  nav.topnav{
+    background:var(--ink-2);border-bottom:1px solid var(--line);
     display:flex;
   }
-  nav.bottom button{
+  nav.topnav button{
     flex:1;background:none;border:none;color:var(--paper);opacity:0.5;
     padding:14px 0 10px;font-family:'JetBrains Mono',monospace;font-size:10px;
     letter-spacing:1px;text-transform:uppercase;cursor:pointer;
   }
-  nav.bottom button.active{opacity:1;color:var(--gold);}
+  nav.topnav button.active{opacity:1;color:var(--gold);}
 
   h3.section-title{font-family:'Zilla Slab',serif;font-size:18px;margin:0 0 4px;}
   p.section-sub{opacity:0.6;font-size:13px;margin:0 0 18px;}
@@ -156,14 +156,22 @@
     <div class="who" id="whoBadge" onclick="handleWhoBadgeClick()">Log in</div>
   </header>
 
+  <nav class="topnav">
+    <button id="nav-scan" onclick="showScreen('scan')">Scan</button>
+    <button id="nav-shelf" onclick="showScreen('shelf')">Shelf</button>
+    <button id="nav-approvals" onclick="showScreen('approvals')">Approvals</button>
+    <button id="nav-users" onclick="showScreen('users')">Users</button>
+    <button id="nav-summary" onclick="showScreen('summary')">Summary</button>
+  </nav>
+
   <main>
 
     <!-- IDENTIFY (login landing page) -->
     <section class="screen" id="screen-identify">
       <h3 class="section-title">Sign in</h3>
-      <p class="section-sub">Start typing your name, email, or phone — pick your record from the list.</p>
+      <p class="section-sub">Start typing your name, or your parent's name — pick your record from the list.</p>
       <div class="field">
-        <label>Name, email, or phone</label>
+        <label>Name</label>
         <input type="text" id="loginQuery" placeholder="Start typing…" oninput="onLoginSearchInput()">
       </div>
       <p class="section-sub" id="signInStatus" style="color:#e8998a;"></p>
@@ -194,11 +202,14 @@
     <section class="screen" id="screen-scan">
       <div class="scan-hero">
         <h1>Scan a book</h1>
-        <p>One scan requests to borrow it — an admin approves it. Scan the same book again to return it.</p>
+        <p>Scan as many books as you like, then confirm all at once. Scan an already-borrowed book to return it.</p>
       </div>
       <p class="section-sub" id="scanIdentityBanner" style="text-align:center;"></p>
+      <div id="myBooksSummary"></div>
       <button class="btn btn-primary" id="scanBtn" onclick="toggleScanner()">Start scanning</button>
       <div id="reader" style="display:none;"></div>
+      <p class="section-sub" id="scanNote" style="text-align:center;color:var(--gold);"></p>
+      <div id="scanQueueList"></div>
       <div id="resultArea"></div>
     </section>
 
@@ -251,7 +262,7 @@
     <!-- USERS (admin only) -->
     <section class="screen" id="screen-users">
       <h3 class="section-title">User list</h3>
-      <p class="section-sub">Start typing to search by class, name, parent, email, or phone.</p>
+      <p class="section-sub">Start typing to search by class, name, or parent.</p>
       <div class="field">
         <label>Search</label>
         <input type="text" id="usersSearch" placeholder="Start typing…" oninput="onUsersSearchInput()">
@@ -259,14 +270,16 @@
       <div id="usersList"></div>
     </section>
 
-  </main>
+    <!-- SUMMARY (admin only) -->
+    <section class="screen" id="screen-summary">
+      <h3 class="section-title">Summary</h3>
+      <p class="section-sub">Tap a number to see details.</p>
+      <div id="summaryTiles"></div>
+      <div class="divider"></div>
+      <div id="summaryDetail"></div>
+    </section>
 
-  <nav class="bottom">
-    <button id="nav-scan" onclick="showScreen('scan')">Scan</button>
-    <button id="nav-shelf" onclick="showScreen('shelf')">Shelf</button>
-    <button id="nav-approvals" onclick="showScreen('approvals')">Approvals</button>
-    <button id="nav-users" onclick="showScreen('users')">Users</button>
-  </nav>
+  </main>
 </div>
 
 <script>
@@ -278,26 +291,25 @@ let ACTING_AS = null; // admin temporarily scanning on behalf of a chosen User L
 let html5QrCode = null;
 let scanning = false;
 let bookCache = [];
-let approvalPollTimer = null;
-let approvalPollAttempts = 0;
-const APPROVAL_POLL_INTERVAL_MS = 4000;
-const APPROVAL_POLL_MAX_ATTEMPTS = 45; // ~3 minutes
+let scanQueue = []; // { itemId, title, action, name, contact }
+let scanProcessing = false;
 
 function showScreen(name){
-  if((name==='shelf' || name==='approvals' || name==='users') && !(USER && USER.isAdmin)) name = 'scan';
+  if((name==='shelf' || name==='approvals' || name==='users' || name==='summary') && !(USER && USER.isAdmin)) name = 'scan';
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
-  document.querySelectorAll('nav.bottom button').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('nav.topnav button').forEach(b=>b.classList.remove('active'));
   const el = document.getElementById('screen-'+name);
   if(el) el.classList.add('active');
   const nav = document.getElementById('nav-'+name);
   if(nav) nav.classList.add('active');
   if(name==='shelf') loadShelf();
   if(name==='approvals') loadApprovals();
+  if(name==='summary') loadSummary();
   if(name==='users'){
     document.getElementById('usersSearch').value = '';
     document.getElementById('usersList').innerHTML = '<p style="opacity:0.6;font-size:13px;">Type at least 2 characters to search.</p>';
   }
-  if(name==='scan') updateScanIdentityBanner();
+  if(name==='scan'){ updateScanIdentityBanner(); refreshMyBooks(); }
 }
 
 async function init(){
@@ -316,7 +328,7 @@ function debounce_(fn, wait){
   };
 }
 
-function contactOf_(u){ return u.email || u.phone || ''; }
+function contactOf_(u){ return u.name || ''; }
 
 // A parent has no row of their own — their "contact" for record-keeping
 // borrows the email/phone off their first listed child's row, since
@@ -436,6 +448,8 @@ function applyAdminUI(isAdmin){
   if(approvalsNav) approvalsNav.style.display = isAdmin ? '' : 'none';
   const usersNav = document.getElementById('nav-users');
   if(usersNav) usersNav.style.display = isAdmin ? '' : 'none';
+  const summaryNav = document.getElementById('nav-summary');
+  if(summaryNav) summaryNav.style.display = isAdmin ? '' : 'none';
 }
 
 async function loadRemoteConfig(){
@@ -487,14 +501,14 @@ async function toggleScanner(){
   const reader = document.getElementById('reader');
   const btn = document.getElementById('scanBtn');
   if(scanning){
-    await html5QrCode.stop();
-    reader.style.display='none';
-    btn.textContent='Start scanning';
-    scanning=false;
+    await stopScanningSession();
     return;
   }
+  scanQueue = [];
+  renderScanQueue();
+  document.getElementById('resultArea').innerHTML = '';
   reader.style.display='block';
-  btn.textContent='Stop scanning';
+  btn.textContent='Done scanning';
   scanning=true;
   html5QrCode = new Html5Qrcode('reader');
   html5QrCode.start(
@@ -509,168 +523,214 @@ async function toggleScanner(){
   });
 }
 
-async function onScanSuccess(decodedText){
+async function stopScanningSession(){
+  const reader = document.getElementById('reader');
+  const btn = document.getElementById('scanBtn');
   await html5QrCode.stop();
-  document.getElementById('reader').style.display='none';
-  document.getElementById('scanBtn').textContent='Start scanning';
+  reader.style.display='none';
+  btn.textContent='Start scanning';
   scanning=false;
-  processScan(decodedText.trim());
-}
-
-// For a single-match user (or an admin acting as someone via the Users
-// screen), the identity to scan as is already known. For a parent match,
-// we don't know until we check whether this scan is a borrow (needs a
-// child picked) or a return (identity doesn't matter to the backend).
-async function processScan(itemId){
-  stopApprovalPolling();
-  const area = document.getElementById('resultArea');
-
-  if(ACTING_AS){
-    await doScan(itemId, ACTING_AS.name, ACTING_AS.contact);
-    return;
-  }
-  if(USER.matchType === 'parent'){
-    area.innerHTML = '<p style="opacity:0.6;font-family:JetBrains Mono,monospace;font-size:12px;">Checking book…</p>';
-    try{
-      const res = await fetch(CONFIG.apiUrl + '?action=lookup&itemId=' + encodeURIComponent(itemId));
-      const data = await res.json();
-      if(data.error){
-        area.innerHTML = '<div class="error-card">'+escapeHtml(data.error)+' (scanned ID: '+escapeHtml(itemId)+')</div>';
-        return;
-      }
-      if((data.status || 'Available') === 'Available'){
-        renderChildPicker(itemId, data.title);
-        return;
-      }
-      // Return, or already pending — the backend ignores name/contact for
-      // both of those, so any of the matched children works as a placeholder.
-      const placeholder = USER.children[0];
-      await doScan(itemId, placeholder.name, contactOf_(placeholder));
-    }catch(e){
-      area.innerHTML = '<div class="error-card">Couldn\'t reach the sheet. Check your connection and try again.</div>';
-    }
-    return;
-  }
-  await doScan(itemId, USER.name, USER.contact);
-}
-
-function renderChildPicker(itemId, title){
-  const area = document.getElementById('resultArea');
-  area.innerHTML = `
-    <div class="stamp-card">
-      <div class="eyebrow">Who is this for?</div>
-      <h2>${escapeHtml(title)}</h2>
-      <div id="childPickerButtons" style="margin-top:14px;display:flex;flex-direction:column;gap:8px;"></div>
-    </div>`;
-  const holder = document.getElementById('childPickerButtons');
-  USER.children.forEach(child=>{
-    const btn = document.createElement('button');
-    btn.className = 'btn btn-outline';
-    btn.textContent = child.name + (child.class ? ' ('+child.class+')' : '');
-    btn.onclick = () => doScan(itemId, child.name, contactOf_(child));
-    holder.appendChild(btn);
-  });
-  const selfBtn = document.createElement('button');
-  selfBtn.className = 'btn btn-primary';
-  selfBtn.textContent = 'Borrow for myself ('+USER.name+')';
-  // Tagged "(Parent)" so this can never collide with a child of the same
-  // name for the per-name borrow limit, and reads clearly in the Sheet.
-  selfBtn.onclick = () => doScan(itemId, USER.name + ' (Parent)', USER.contact);
-  holder.appendChild(selfBtn);
-}
-
-async function doScan(itemId, name, contact){
-  const area = document.getElementById('resultArea');
-  area.innerHTML = '<p style="opacity:0.6;font-family:JetBrains Mono,monospace;font-size:12px;">Updating sheet…</p>';
-  try{
-    const url = CONFIG.apiUrl + '?action=scan&itemId=' + encodeURIComponent(itemId)
-      + '&name=' + encodeURIComponent(name)
-      + '&contact=' + encodeURIComponent(contact || '');
-    const res = await fetch(url);
-    const data = await res.json();
-    if(data.error){
-      area.innerHTML = '<div class="error-card">'+escapeHtml(data.error)+' (scanned ID: '+escapeHtml(itemId)+')</div>';
-      return;
-    }
-    if(data.action === 'pending'){
-      renderPendingApproval(data);
-      startApprovalPolling(data.requestId);
-      return;
-    }
-    renderStamp(data, name);
-  }catch(e){
-    area.innerHTML = '<div class="error-card">Couldn\'t reach the sheet. Check your connection and try again.</div>';
-  }
-}
-
-function renderStamp(data, actingName){
-  const area = document.getElementById('resultArea');
-  const isBorrow = data.action === 'borrow';
-  const stampClass = isBorrow ? 'borrow' : 'return';
-  const stampLabel = isBorrow ? 'Borrowed' : 'Returned';
-  let rows = '';
-  if(isBorrow){
-    rows += detailRow('Borrower', data.borrowerName);
-    rows += detailRow('Due back', new Date(data.dueDate).toLocaleDateString());
+  if(scanQueue.length){
+    renderQueueConfirmation();
   } else {
-    rows += detailRow('Returned by', data.borrowerName || actingName || '');
+    document.getElementById('resultArea').innerHTML = '';
   }
-  rows += detailRow('Item ID', data.itemId);
-  area.innerHTML = `
-    <div class="stamp-card">
-      <div class="stamp-mark ${stampClass}">${stampLabel}</div>
-      <div class="eyebrow">${isBorrow ? 'Now on loan' : 'Back on the shelf'}</div>
-      <h2>${escapeHtml(data.title)}</h2>
-      ${rows}
-    </div>`;
 }
 
-function renderPendingApproval(data){
-  const area = document.getElementById('resultArea');
-  area.innerHTML = `
-    <div class="stamp-card">
-      <div class="eyebrow">Awaiting admin approval</div>
-      <h2>${escapeHtml(data.title)}</h2>
-      <div class="detail-row"><span>Item ID</span><span>${escapeHtml(data.itemId)}</span></div>
-      <p style="opacity:0.6;font-size:13px;margin-top:14px;">An admin needs to approve this borrow request in the Google Sheet. This updates automatically once they do — no need to rescan.</p>
-    </div>`;
-}
-
-function stopApprovalPolling(){
-  if(approvalPollTimer){ clearInterval(approvalPollTimer); approvalPollTimer = null; }
-  approvalPollAttempts = 0;
-}
-
-function startApprovalPolling(requestId){
-  stopApprovalPolling();
-  if(!requestId) return;
-  approvalPollTimer = setInterval(() => pollApproval(requestId), APPROVAL_POLL_INTERVAL_MS);
-}
-
-async function pollApproval(requestId){
-  approvalPollAttempts++;
-  if(approvalPollAttempts > APPROVAL_POLL_MAX_ATTEMPTS){
-    stopApprovalPolling();
-    document.getElementById('resultArea').innerHTML +=
-      '<div class="error-card">Still waiting on admin approval. Check back later — no need to rescan.</div>';
+// Scans are only queued here — nothing is written to the sheet until the
+// user reviews the whole batch and confirms (see commitScanQueue). For a
+// parent match we pause the queue (via the child-picker promise) until the
+// borrower is chosen; returns and already-pending items don't need that.
+async function onScanSuccess(decodedText){
+  if(scanProcessing) return; // ignore repeat frames of a still-visible code
+  const itemId = decodedText.trim();
+  if(scanQueue.some(q => q.itemId === itemId)){
+    flashScanNote_('Already queued: '+itemId);
     return;
   }
+  scanProcessing = true;
   try{
-    const res = await fetch(CONFIG.apiUrl + '?action=checkApproval&requestId=' + encodeURIComponent(requestId));
+    const res = await fetch(CONFIG.apiUrl + '?action=lookup&itemId=' + encodeURIComponent(itemId));
     const data = await res.json();
-    if(data.error) return; // transient error — keep polling
-    if(data.status === 'approved'){
-      stopApprovalPolling();
-      renderStamp({ action:'borrow', itemId:data.itemId, title:data.title, borrowerName:data.borrowerName, dueDate:data.dueDate });
-    } else if(data.status === 'denied'){
-      stopApprovalPolling();
-      document.getElementById('resultArea').innerHTML =
-        '<div class="error-card">Request denied by admin for "'+escapeHtml(data.title)+'".</div>';
+    if(data.error){ flashScanNote_(data.error+' ('+itemId+')'); return; }
+    const status = data.status || 'Available';
+    if(status === 'Pending'){ flashScanNote_('"'+data.title+'" is already awaiting approval.'); return; }
+    if(status === 'Available'){
+      if(ACTING_AS){
+        addToQueue_(itemId, data.title, 'borrow', ACTING_AS.name, ACTING_AS.contact);
+      } else if(USER.matchType === 'parent'){
+        await pauseForChildPicker_(itemId, data.title);
+      } else {
+        addToQueue_(itemId, data.title, 'borrow', USER.name, USER.contact);
+      }
+    } else { // Borrowed
+      const placeholderName = ACTING_AS ? ACTING_AS.name : (USER.matchType==='parent' ? USER.children[0].name : USER.name);
+      const placeholderContact = ACTING_AS ? ACTING_AS.contact : (USER.matchType==='parent' ? contactOf_(USER.children[0]) : USER.contact);
+      addToQueue_(itemId, data.title, 'return', placeholderName, placeholderContact);
     }
-  }catch(e){ /* network hiccup — keep polling */ }
+  }catch(e){
+    flashScanNote_('Could not reach the sheet for '+itemId+'.');
+  } finally {
+    scanProcessing = false;
+  }
 }
+
+function pauseForChildPicker_(itemId, title){
+  return new Promise(resolve => {
+    const area = document.getElementById('resultArea');
+    area.innerHTML = `
+      <div class="stamp-card">
+        <div class="eyebrow">Who is this for?</div>
+        <h2>${escapeHtml(title)}</h2>
+        <div id="childPickerButtons" style="margin-top:14px;display:flex;flex-direction:column;gap:8px;"></div>
+      </div>`;
+    const holder = document.getElementById('childPickerButtons');
+    USER.children.forEach(child=>{
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-outline';
+      btn.textContent = child.name + (child.class ? ' ('+child.class+')' : '');
+      btn.onclick = () => {
+        addToQueue_(itemId, title, 'borrow', child.name, contactOf_(child));
+        area.innerHTML = '';
+        resolve();
+      };
+      holder.appendChild(btn);
+    });
+    const selfBtn = document.createElement('button');
+    selfBtn.className = 'btn btn-primary';
+    selfBtn.textContent = 'Borrow for myself ('+USER.name+')';
+    // Tagged "(Parent)" so this can never collide with a child of the same
+    // name for the per-name borrow limit, and reads clearly in the Sheet.
+    selfBtn.onclick = () => {
+      addToQueue_(itemId, title, 'borrow', USER.name + ' (Parent)', USER.contact);
+      area.innerHTML = '';
+      resolve();
+    };
+    holder.appendChild(selfBtn);
+  });
+}
+
+function addToQueue_(itemId, title, action, name, contact){
+  scanQueue.push({ itemId, title, action, name, contact });
+  renderScanQueue();
+}
+
+function flashScanNote_(msg){
+  const el = document.getElementById('scanNote');
+  if(!el) return;
+  el.textContent = msg;
+  clearTimeout(flashScanNote_.t);
+  flashScanNote_.t = setTimeout(()=>{ el.textContent=''; }, 3000);
+}
+
+function renderScanQueue(){
+  const el = document.getElementById('scanQueueList');
+  if(!el) return;
+  if(!scanQueue.length){ el.innerHTML=''; return; }
+  el.innerHTML = '<p class="section-sub" style="margin:10px 0 6px;">'+scanQueue.length+' item'+(scanQueue.length===1?'':'s')+' scanned</p>' +
+    scanQueue.map((q,i) => `
+      <div class="book-row">
+        <div class="meta">
+          <div class="title">${escapeHtml(q.title)}</div>
+          <div class="sub">${q.action === 'borrow' ? 'Borrow' : 'Return'} · ${escapeHtml(q.name)}</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" data-idx="${i}">Remove</button>
+      </div>`).join('');
+  el.querySelectorAll('button[data-idx]').forEach(btn=>{
+    btn.onclick = () => { scanQueue.splice(Number(btn.dataset.idx), 1); renderScanQueue(); };
+  });
+}
+
+function renderQueueConfirmation(){
+  const area = document.getElementById('resultArea');
+  const borrowCount = scanQueue.filter(q=>q.action==='borrow').length;
+  const returnCount = scanQueue.filter(q=>q.action==='return').length;
+  let headline;
+  if(borrowCount && returnCount) headline = 'Borrow '+borrowCount+', Return '+returnCount+'?';
+  else if(borrowCount) headline = 'Borrow '+borrowCount+' Item'+(borrowCount===1?'':'s')+'?';
+  else headline = 'Return '+returnCount+' Item'+(returnCount===1?'':'s')+'?';
+  area.innerHTML = `
+    <div class="stamp-card">
+      <div class="eyebrow">Confirm</div>
+      <h2>${headline}</h2>
+      <div id="confirmList" style="margin:10px 0;"></div>
+      <button class="btn btn-primary" id="confirmQueueBtn">Confirm</button>
+      <button class="btn btn-outline" style="margin-top:10px;" id="cancelQueueBtn">Cancel</button>
+    </div>`;
+  const listEl = document.getElementById('confirmList');
+  listEl.innerHTML = scanQueue.map(q => `<div class="detail-row"><span>${q.action==='borrow'?'Borrow':'Return'}</span><span>${escapeHtml(q.title)}</span></div>`).join('');
+  document.getElementById('confirmQueueBtn').onclick = commitScanQueue;
+  document.getElementById('cancelQueueBtn').onclick = () => { scanQueue = []; renderScanQueue(); document.getElementById('resultArea').innerHTML=''; };
+}
+
+async function commitScanQueue(){
+  const area = document.getElementById('resultArea');
+  const queue = scanQueue.slice();
+  scanQueue = [];
+  renderScanQueue();
+  const results = [];
+  for(const q of queue){
+    area.innerHTML = '<p style="opacity:0.6;font-family:JetBrains Mono,monospace;font-size:12px;">Processing '+escapeHtml(q.title)+'…</p>';
+    try{
+      const url = CONFIG.apiUrl + '?action=scan&itemId=' + encodeURIComponent(q.itemId)
+        + '&name=' + encodeURIComponent(q.name) + '&contact=' + encodeURIComponent(q.contact || '');
+      const res = await fetch(url);
+      const data = await res.json();
+      results.push({ q, data });
+    }catch(e){
+      results.push({ q, data: { error: 'Network error' } });
+    }
+  }
+  renderQueueResults(results);
+  refreshMyBooks();
+}
+
+function renderQueueResults(results){
+  const area = document.getElementById('resultArea');
+  area.innerHTML = '<div class="stamp-card"><div class="eyebrow">Done</div><h2>'+results.length+' processed</h2><div id="queueResultsList"></div></div>';
+  const listEl = document.getElementById('queueResultsList');
+  listEl.innerHTML = results.map(({q,data}) => {
+    let status;
+    if(data.error) status = 'Error: '+escapeHtml(data.error);
+    else if(data.action==='pending') status = 'Awaiting approval';
+    else if(data.action==='borrow') status = 'Borrowed';
+    else status = 'Returned';
+    return `<div class="detail-row"><span>${escapeHtml(q.title)}</span><span>${status}</span></div>`;
+  }).join('');
+}
+
 function detailRow(k,v){ return `<div class="detail-row"><span>${k}</span><span>${escapeHtml(String(v||'—'))}</span></div>`; }
 function escapeHtml(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+
+function myBooksNames_(){
+  if(!USER) return [];
+  if(USER.matchType === 'parent') return [USER.name+' (Parent)'].concat(USER.children.map(c=>c.name));
+  if(USER.matchType === 'individual') return [USER.name];
+  return [];
+}
+
+async function refreshMyBooks(){
+  const el = document.getElementById('myBooksSummary');
+  if(!el) return;
+  if(!USER || USER.matchType === 'admin'){ el.innerHTML = ''; return; }
+  const names = myBooksNames_();
+  if(!names.length){ el.innerHTML = ''; return; }
+  try{
+    const res = await fetch(CONFIG.apiUrl + '?action=myLoans&names=' + encodeURIComponent(names.join(',')));
+    const data = await res.json();
+    const loans = data.loans || [];
+    if(!loans.length){ el.innerHTML = '<p class="section-sub" style="text-align:center;">No books currently borrowed.</p>'; return; }
+    el.innerHTML = `
+      <p class="section-sub" style="text-align:center;font-weight:600;color:var(--paper);opacity:1;">${loans.length} book${loans.length===1?'':'s'} borrowed</p>
+      ` + loans.map(l => `
+        <div class="book-row">
+          <div class="meta">
+            <div class="title">${escapeHtml(l.title)}${USER.matchType==='parent' ? ' <span style="opacity:0.5;font-weight:400;">('+escapeHtml(l.borrowerName)+')</span>' : ''}</div>
+          </div>
+          <span class="status-pill avail">Due ${l.dueDate ? new Date(l.dueDate).toLocaleDateString() : '—'}</span>
+        </div>`).join('');
+  }catch(e){ el.innerHTML = ''; }
+}
 
 async function loadShelf(){
   const countEl = document.getElementById('shelfCount');
@@ -783,6 +843,55 @@ async function approveAllRequests(){
   }catch(e){ alert('Could not approve all — check your connection and try again.'); }
 }
 
+let summaryCache = null;
+
+async function loadSummary(){
+  const tilesEl = document.getElementById('summaryTiles');
+  tilesEl.innerHTML = '<p class="section-sub">Loading…</p>';
+  document.getElementById('summaryDetail').innerHTML = '';
+  try{
+    const res = await fetch(CONFIG.apiUrl + '?action=getSummary&adminEmail=' + encodeURIComponent(USER.contact||''));
+    const data = await res.json();
+    if(data.error){ tilesEl.innerHTML = '<p class="section-sub">'+escapeHtml(data.error)+'</p>'; return; }
+    summaryCache = data;
+    renderSummaryTiles();
+  }catch(e){
+    tilesEl.innerHTML = '<p class="section-sub">Could not load — check your connection and try again.</p>';
+  }
+}
+
+function renderSummaryTiles(){
+  const tilesEl = document.getElementById('summaryTiles');
+  const tiles = [
+    { key:'borrowed', label:'Currently borrowed' },
+    { key:'borrowedToday', label:'Borrowed today' },
+    { key:'due', label:'Overdue' },
+    { key:'dueToday', label:'Due today' }
+  ];
+  tilesEl.innerHTML = tiles.map(t => `
+    <button class="btn btn-outline" style="margin-bottom:8px;display:flex;justify-content:space-between;" data-key="${t.key}">
+      <span>${t.label}</span><strong>${summaryCache[t.key].count}</strong>
+    </button>`).join('');
+  tilesEl.querySelectorAll('button[data-key]').forEach(btn=>{
+    btn.onclick = () => renderSummaryDetail(btn.dataset.key, tiles.find(t=>t.key===btn.dataset.key).label);
+  });
+}
+
+function renderSummaryDetail(key, label){
+  const detailEl = document.getElementById('summaryDetail');
+  const items = summaryCache[key].items;
+  if(!items.length){ detailEl.innerHTML = '<h3 class="section-title" style="font-size:15px;">'+escapeHtml(label)+'</h3><p class="section-sub">No items.</p>'; return; }
+  detailEl.innerHTML = '<h3 class="section-title" style="font-size:15px;">'+escapeHtml(label)+'</h3>' +
+    items.map(it => `
+      <div class="book-row">
+        <div class="meta">
+          <div class="title">${escapeHtml(it.title)}</div>
+          <div class="sub">${escapeHtml(it.borrowerName||'')}</div>
+        </div>
+        <span class="status-pill borrowed">${it.dueDate ? new Date(it.dueDate).toLocaleDateString() : '—'}</span>
+      </div>`).join('');
+}
+
 const onUsersSearchInput = debounce_(async function(){
   const query = document.getElementById('usersSearch').value.trim();
   const listEl = document.getElementById('usersList');
@@ -814,7 +923,7 @@ function renderUsersResults(candidates){
     <div class="book-row">
       <div class="meta">
         <div class="title">${escapeHtml(u.name)}</div>
-        <div class="sub">${escapeHtml(u.class)}${u.parent?' · Parent: '+escapeHtml(u.parent):''}${u.email?' · '+escapeHtml(u.email):''}${u.phone?' · '+escapeHtml(u.phone):''}</div>
+        <div class="sub">${escapeHtml(u.class)}${u.parent1?' · Parent 1: '+escapeHtml(u.parent1):''}${u.parent2?' · Parent 2: '+escapeHtml(u.parent2):''}</div>
       </div>
       <button class="btn btn-primary btn-sm" data-idx="${i}">Use for scan</button>
     </div>`).join('');

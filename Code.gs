@@ -15,15 +15,15 @@
  *    in an updated version of this file) — it only creates whatever's
  *    missing and never clears a tab that already has data in it.
  * 6. Fill in the "User List" tab: one row per person, columns Class,
- *    Name, Parent, Email, Phone. This is the roster everyone signs in
- *    against — there is no separate password. A row with no Parent is
- *    treated as signing in for themself (e.g. staff/admins); a row
- *    with a Parent name is a child, and whoever's Email/Phone is on
- *    that row (typically the parent's own contact info, since kids
- *    often don't have their own) can sign in as the parent and pick
- *    which child a given scan is for. If the same Email/Phone value
- *    appears on more than one row, signing in with it is treated as a
- *    parent with that many children.
+ *    Name, Parent1, Parent2. This is the roster everyone signs in
+ *    against — there is no separate password, and no email/phone
+ *    stored at all. A row with both Parent columns blank is treated as
+ *    signing in for themself (e.g. staff/admins); a row with a Parent1
+ *    and/or Parent2 name is a child, and typing that guardian's own
+ *    name signs in as the parent, with the option to pick a specific
+ *    child (or themself) each time they borrow. (If you have an
+ *    existing sheet from before this schema, run `migrateUserListSchema`
+ *    once instead of retyping everything — see that function's comment.)
  * 7. Add admin approvers: in the Admins tab, add one row per admin with
  *    their email in column A — this must be the exact same email as
  *    that admin's row in User List, since that's what they'll sign in
@@ -63,11 +63,10 @@
  *
  * HOW SIGN-IN WORKS (no Google/Facebook login, no password — everyone
  * matches against the User List tab):
- * - As someone types a name, email, or phone number (2+ characters),
- *   the app live-searches every row's Class/Name/Parent/Email/Phone for
- *   that substring and shows matching people to tap — not an exact
- *   match, so "yuki" finds "Yuki Sato" and a partial phone number works
- *   too. There's no guest/fallback mode; if you're not found, you're
+ * - As someone types a name (2+ characters), the app live-searches
+ *   every row's Class/Name/Parent1/Parent2 for that substring and shows
+ *   matching people to tap — not an exact match, so "yuki" finds "Yuki
+ *   Sato". There's no guest/fallback mode; if you're not found, you're
  *   not in the sheet yet.
  * - Rows that share a Parent name also produce a "Parent of ..." option
  *   alongside the individual children, so a parent can sign in as
@@ -182,9 +181,49 @@ function setupSheets() {
   let users = ss.getSheetByName(USERS_SHEET);
   if (!users) {
     users = ss.insertSheet(USERS_SHEET);
-    users.appendRow(['Class', 'Name', 'Parent', 'Email', 'Phone']);
+    users.appendRow(['Class', 'Name', 'Parent1', 'Parent2']);
     users.setFrozenRows(1);
   }
+}
+
+/**
+ * One-time migration for a User List tab created before Parent1/Parent2
+ * replaced Parent/Email/Phone. Run this once if your sheet still has
+ * the old header — safe to run more than once (does nothing if already
+ * migrated), and does not touch Class/Name/Parent data.
+ *
+ * Old: Class, Name, Parent,  Email, Phone
+ * New: Class, Name, Parent1, Parent2
+ *
+ * "Parent" becomes "Parent1" in place; a new blank "Parent2" column is
+ * inserted where Email used to be; the old Email and Phone columns are
+ * then deleted. If you had a second guardian's contact info in Email or
+ * Phone, move it into Parent2 as that guardian's name before running
+ * this, since those columns are deleted, not preserved elsewhere.
+ */
+function migrateUserListSchema() {
+  const ss = getSS();
+  const sh = ss.getSheetByName(USERS_SHEET);
+  if (!sh) { setupSheets(); return; }
+
+  const lastCol = Math.max(sh.getLastColumn(), 5);
+  const header = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(h => String(h).trim());
+
+  if (header[0] === 'Class' && header[1] === 'Name' && header[2] === 'Parent1' && header[3] === 'Parent2') {
+    return; // already migrated
+  }
+
+  if (header[0] === 'Class' && header[1] === 'Name' && header[2] === 'Parent' && header[3] === 'Email' && header[4] === 'Phone') {
+    sh.getRange(1, 3).setValue('Parent1');
+    sh.insertColumnAfter(3);
+    sh.getRange(1, 4).setValue('Parent2');
+    // Columns shifted right by the insert: Email is now column E (5), Phone is F (6).
+    sh.deleteColumn(6);
+    sh.deleteColumn(5);
+    return;
+  }
+
+  throw new Error('User List header does not match the expected old or new schema — check it by hand before migrating.');
 }
 
 function applyApprovalValidation_(sh, startRow, numRows) {
@@ -364,7 +403,10 @@ function doGet(e) {
         result = addBook(e.parameter.itemId, e.parameter.title, e.parameter.author);
         break;
       case 'myLoans':
-        result = myLoans(e.parameter.contact);
+        result = myLoans(e.parameter.names);
+        break;
+      case 'getSummary':
+        result = getSummary(e.parameter.adminEmail);
         break;
       case 'checkApproval':
         result = checkApproval(e.parameter.requestId);
@@ -672,20 +714,21 @@ function getUsersSheet_() {
 }
 
 function userRowToObject_(row) {
-  return { class: row[0] || '', name: row[1] || '', parent: row[2] || '', email: row[3] || '', phone: row[4] || '' };
+  return { class: row[0] || '', name: row[1] || '', parent1: row[2] || '', parent2: row[3] || '' };
 }
 
 /**
  * Patron sign-in and the admin Users lookup both go through this: a
  * loose, case-insensitive substring match against
- * Class/Name/Parent/Email/Phone (not an exact match — "yuki" matches
- * "Yuki Sato", a partial phone number matches the full one, etc). Every
- * matching row is returned as an "individual" candidate. Rows that
- * share a non-empty Parent value also produce one "parent" candidate
- * per distinct parent name, listing every child under that parent (not
- * just the ones this particular query matched), so a parent typing
- * their own name/phone sees all their kids together and gets the
- * option to sign in as themself instead of a specific child.
+ * Class/Name/Parent1/Parent2 (not an exact match — "yuki" matches "Yuki
+ * Sato", etc). Every matching row is returned as an "individual"
+ * candidate. Rows that share a non-empty Parent1 or Parent2 value also
+ * produce one "parent" candidate per distinct parent name (checking
+ * both columns, so either guardian gets their own group), listing every
+ * child under that parent (not just the ones this particular query
+ * matched), so a parent typing their own name sees all their kids
+ * together and gets the option to sign in as themself instead of a
+ * specific child.
  *
  * This no longer grants admin status — admins sign in through the
  * separate adminLogin action instead, which requires the shared
@@ -695,16 +738,16 @@ function userRowToObject_(row) {
  *
  * SECURITY NOTE: this action is intentionally public (it's the sign-in
  * entry point, called before anyone has proven who they are) and does
- * a loose substring match instead of requiring an exact email/phone.
+ * a loose substring match instead of requiring an exact identifier.
  * That means anyone who can reach the web app URL — published in this
  * public repo's index.html — can enumerate rows of this roster (names,
- * classes, parent names, emails, phone numbers) without signing in, by
- * trying short/common substrings. The 2-character minimum and
- * 25-result cap below raise the bar slightly but don't prevent a
- * determined, scripted attempt. Worth knowing since this roster
- * includes children's information — ask if you want this hardened
- * further (e.g. withholding email/phone from the response, a longer
- * minimum query, or rate limiting).
+ * classes, parent names) without signing in, by trying short/common
+ * substrings. The 2-character minimum and 25-result cap below raise the
+ * bar slightly but don't prevent a determined, scripted attempt. This
+ * roster no longer includes email/phone, which meaningfully reduces
+ * what's exposed here, but names alone are still worth being mindful
+ * of for a roster of children — ask if you want this hardened further
+ * (a longer minimum query, or rate limiting).
  */
 function searchUsers(query) {
   const target = String(query || '').trim().toLowerCase();
@@ -713,28 +756,33 @@ function searchUsers(query) {
   const rows = [];
   for (let i = 1; i < data.length; i++) {
     const row = userRowToObject_(data[i]);
-    const haystack = [row.class, row.name, row.parent, row.email, row.phone].join(' ').toLowerCase();
+    const haystack = [row.class, row.name, row.parent1, row.parent2].join(' ').toLowerCase();
     if (haystack.includes(target)) rows.push(row);
   }
   const limited = rows.slice(0, 25);
-  const candidates = limited.map(r => ({ type: 'individual', class: r.class, name: r.name, parent: r.parent, email: r.email, phone: r.phone }));
+  const candidates = limited.map(r => ({ type: 'individual', class: r.class, name: r.name, parent1: r.parent1, parent2: r.parent2 }));
 
   // Grouped by a case/whitespace-normalized key so "Tetsuya Tsukada" and
   // "tetsuya tsukada " (an easy inconsistency to have across sibling rows
   // typed by hand) are treated as the same parent instead of splitting
-  // into separate buckets or dropping a child from the group.
+  // into separate buckets or dropping a child from the group. Checks
+  // both Parent1 and Parent2 so either guardian gets their own group.
   const parentGroups = {}; // normalized key -> { displayName, children }
   limited.forEach(r => {
-    const p = String(r.parent || '').trim();
-    if (!p) return;
-    const key = p.toLowerCase();
-    if (!parentGroups[key]) parentGroups[key] = { displayName: p, children: [] };
+    [r.parent1, r.parent2].forEach(p => {
+      const trimmed = String(p || '').trim();
+      if (!trimmed) return;
+      const key = trimmed.toLowerCase();
+      if (!parentGroups[key]) parentGroups[key] = { displayName: trimmed, children: [] };
+    });
   });
   Object.keys(parentGroups).forEach(key => {
     const group = parentGroups[key];
     for (let i = 1; i < data.length; i++) {
       const row = userRowToObject_(data[i]);
-      if (String(row.parent || '').trim().toLowerCase() === key) group.children.push(row);
+      const p1 = String(row.parent1 || '').trim().toLowerCase();
+      const p2 = String(row.parent2 || '').trim().toLowerCase();
+      if (p1 === key || p2 === key) group.children.push(row);
     }
     candidates.push({ type: 'parent', name: group.displayName, children: group.children });
   });
@@ -784,9 +832,56 @@ function addBook(itemId, title, author) {
   return { ok: true, itemId, title };
 }
 
-function myLoans(contact) {
-  if (!contact) return { error: 'Missing contact' };
+// namesCsv: comma-separated names (a parent passes their own name plus
+// every child's, so one call returns the whole family's current loans).
+function myLoans(namesCsv) {
+  const names = String(namesCsv || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  if (!names.length) return { error: 'Missing name' };
   const { data } = getBooksSheet_();
-  const rows = data.slice(1).filter(r => r[3] === 'Borrowed' && String(r[5]).trim() === String(contact).trim());
-  return { loans: rows.map(r => ({ itemId: r[0], title: r[1], borrowDate: r[6], dueDate: r[7] })) };
+  const rows = data.slice(1).filter(r => r[3] === 'Borrowed' && names.indexOf(String(r[4]).trim().toLowerCase()) !== -1);
+  return {
+    loans: rows.map(r => ({ itemId: r[0], title: r[1], borrowerName: r[4], borrowDate: r[6], dueDate: r[7] }))
+  };
+}
+
+/**
+ * Admin-only dashboard counts. "Due" here means overdue (due date
+ * already passed) — distinct from "due today". Each bucket includes
+ * full item details so the web app can show them on click without a
+ * second request.
+ */
+function getSummary(adminEmail) {
+  if (!adminEmail || !isAdmin_(adminEmail)) return { error: 'Not authorized' };
+  const { data } = getBooksSheet_();
+  const tz = Session.getScriptTimeZone();
+  const todayStr = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
+
+  const borrowed = [];
+  const borrowedToday = [];
+  const due = [];
+  const dueToday = [];
+
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    if (row[3] !== 'Borrowed') continue;
+    const item = { itemId: row[0], title: row[1], borrowerName: row[4], dueDate: row[7] };
+    borrowed.push(item);
+
+    if (row[6]) {
+      const borrowDateStr = Utilities.formatDate(new Date(row[6]), tz, 'yyyy-MM-dd');
+      if (borrowDateStr === todayStr) borrowedToday.push(item);
+    }
+    if (row[7]) {
+      const dueDateStr = Utilities.formatDate(new Date(row[7]), tz, 'yyyy-MM-dd');
+      if (dueDateStr === todayStr) dueToday.push(item);
+      else if (new Date(row[7]) < new Date()) due.push(item);
+    }
+  }
+
+  return {
+    borrowed: { count: borrowed.length, items: borrowed },
+    borrowedToday: { count: borrowedToday.length, items: borrowedToday },
+    due: { count: due.length, items: due },
+    dueToday: { count: dueToday.length, items: dueToday }
+  };
 }
