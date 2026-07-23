@@ -671,18 +671,24 @@ function searchUsers(query) {
   const limited = rows.slice(0, 25);
   const candidates = limited.map(r => ({ type: 'individual', class: r.class, name: r.name, parent: r.parent, email: r.email, phone: r.phone }));
 
-  const parentNames = [];
+  // Grouped by a case/whitespace-normalized key so "Tetsuya Tsukada" and
+  // "tetsuya tsukada " (an easy inconsistency to have across sibling rows
+  // typed by hand) are treated as the same parent instead of splitting
+  // into separate buckets or dropping a child from the group.
+  const parentGroups = {}; // normalized key -> { displayName, children }
   limited.forEach(r => {
     const p = String(r.parent || '').trim();
-    if (p && parentNames.indexOf(p) === -1) parentNames.push(p);
+    if (!p) return;
+    const key = p.toLowerCase();
+    if (!parentGroups[key]) parentGroups[key] = { displayName: p, children: [] };
   });
-  parentNames.forEach(parentName => {
-    const children = [];
+  Object.keys(parentGroups).forEach(key => {
+    const group = parentGroups[key];
     for (let i = 1; i < data.length; i++) {
       const row = userRowToObject_(data[i]);
-      if (String(row.parent || '').trim() === parentName) children.push(row);
+      if (String(row.parent || '').trim().toLowerCase() === key) group.children.push(row);
     }
-    candidates.push({ type: 'parent', name: parentName, children });
+    candidates.push({ type: 'parent', name: group.displayName, children: group.children });
   });
 
   return { candidates, isAdmin: isAdmin_(query) };
