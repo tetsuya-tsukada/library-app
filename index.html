@@ -306,7 +306,9 @@ let html5QrCode = null;
 let scanning = false;
 let bookCache = [];
 let scanQueue = []; // { itemId, title, action, name, contact }
-let scanProcessing = false;
+let pendingScans = []; // itemIds waiting to be looked up (fed from onScanSuccess faster than we can process)
+let processingItemId = null; // itemId currently mid-lookup/child-picker, so repeat frames of it are ignored
+let scanProcessing = false; // true while the pendingScans drain loop is running
 
 function showScreen(name){
   if((name==='shelf' || name==='approvals' || name==='users' || name==='summary') && !(USER && USER.isAdmin)) name = 'scan';
@@ -519,6 +521,9 @@ async function toggleScanner(){
     return;
   }
   scanQueue = [];
+  pendingScans = [];
+  processingItemId = null;
+  scanProcessing = false;
   renderScanQueue();
   document.getElementById('resultArea').innerHTML = '';
   readerWrap.style.display='block';
@@ -555,14 +560,39 @@ async function stopScanningSession(){
 // user reviews the whole batch and confirms (see commitScanQueue). For a
 // parent match we pause the queue (via the child-picker promise) until the
 // borrower is chosen; returns and already-pending items don't need that.
+//
+// The camera keeps calling this for every frame it can read a code in,
+// which can easily outpace how fast we can look one up (network latency,
+// or a child picker waiting on a tap). Rather than drop scans that arrive
+// while one is still being handled, they're queued in pendingScans and
+// drained one at a time by processPendingScans_ — so scanning quickly
+// through several books in a row never silently loses one.
 async function onScanSuccess(decodedText){
-  if(scanProcessing) return; // ignore repeat frames of a still-visible code
   const itemId = decodedText.trim();
+  if(itemId === processingItemId) return; // still-visible code already being handled
   if(scanQueue.some(q => q.itemId === itemId)){
     flashScanNote_('Already queued: '+itemId);
     return;
   }
+  if(pendingScans.includes(itemId)) return; // already waiting in line
+  pendingScans.push(itemId);
+  processPendingScans_();
+}
+
+async function processPendingScans_(){
+  if(scanProcessing) return; // a previous call is already draining the queue
   scanProcessing = true;
+  while(pendingScans.length){
+    const itemId = pendingScans.shift();
+    if(scanQueue.some(q => q.itemId === itemId)) continue; // handled while it was waiting
+    processingItemId = itemId;
+    await lookupAndQueueScan_(itemId);
+    processingItemId = null;
+  }
+  scanProcessing = false;
+}
+
+async function lookupAndQueueScan_(itemId){
   try{
     const res = await fetch(CONFIG.apiUrl + '?action=lookup&itemId=' + encodeURIComponent(itemId));
     const data = await res.json();
@@ -584,8 +614,6 @@ async function onScanSuccess(decodedText){
     }
   }catch(e){
     flashScanNote_('Could not reach the sheet for '+itemId+'.');
-  } finally {
-    scanProcessing = false;
   }
 }
 
