@@ -304,9 +304,16 @@ const PRINT_LABELS_HTML = `<!DOCTYPE html>
   body{font-family:sans-serif;margin:0;padding:16px;}
   .toolbar{margin-bottom:14px;}
   .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
-  .lab{border:1px dashed #999;border-radius:4px;padding:10px;text-align:center;page-break-inside:avoid;}
-  .lab .t{font-size:11px;font-weight:600;margin:6px 0 2px;line-height:1.2;}
-  .lab .i{font-family:monospace;font-size:9px;color:#666;}
+  /* flexbox, not text-align, because the QR library can render a block-
+     level element (e.g. a <table> of modules) that text-align alone
+     won't center */
+  .lab{
+    border:1px dashed #999;border-radius:4px;padding:10px;
+    display:flex;flex-direction:column;align-items:center;
+    page-break-inside:avoid;
+  }
+  .lab .t{font-size:11px;font-weight:600;margin:6px 0 2px;line-height:1.2;text-align:center;}
+  .lab .i{font-family:monospace;font-size:9px;color:#666;text-align:center;}
   @media print { .toolbar{ display:none; } }
 </style>
 </head>
