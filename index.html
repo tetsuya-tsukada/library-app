@@ -60,7 +60,7 @@
   .btn-ghost{background:var(--ink-2);color:var(--paper);}
   .btn:disabled{opacity:0.4;cursor:not-allowed;}
 
-  input[type=text],input[type=tel],input[type=email]{
+  input[type=text],input[type=tel],input[type=email],input[type=password]{
     width:100%;padding:14px;border-radius:4px;border:1px solid var(--line);
     background:var(--ink-2);color:var(--paper);font-family:'Inter',sans-serif;font-size:15px;
     margin-bottom:12px;
@@ -168,6 +168,26 @@
       </div>
       <p class="section-sub" id="signInStatus" style="color:#e8998a;"></p>
       <div id="loginCandidates"></div>
+      <p class="section-sub" style="text-align:center;margin-top:18px;">
+        <a class="linklike" style="cursor:pointer;" onclick="showScreen('admin-login')">Admin login</a>
+      </p>
+    </section>
+
+    <!-- ADMIN LOGIN (separate from patron sign-in) -->
+    <section class="screen" id="screen-admin-login">
+      <h3 class="section-title">Admin login</h3>
+      <p class="section-sub">Separate from patron sign-in. Requires the shared admin passcode.</p>
+      <div class="field">
+        <label>Admin email</label>
+        <input type="text" id="adminLoginEmail" placeholder="you@example.com">
+      </div>
+      <div class="field">
+        <label>Admin passcode</label>
+        <input type="password" id="adminLoginSecret" placeholder="Shared passcode">
+      </div>
+      <button class="btn btn-primary" onclick="adminLogin()">Sign in as admin</button>
+      <button class="btn btn-outline" style="margin-top:10px;" onclick="showScreen('identify')">← Back</button>
+      <p class="section-sub" id="adminLoginError" style="margin-top:10px;color:#e8998a;"></p>
     </section>
 
     <!-- SCAN -->
@@ -301,19 +321,21 @@ function contactOf_(u){ return u.email || u.phone || ''; }
 // A parent has no row of their own — their "contact" for record-keeping
 // borrows the email/phone off their first listed child's row, since
 // that's the same info duplicated across all of them by convention.
-function buildUserFromCandidate_(query, candidate, isAdmin){
+// Patron sign-in never grants admin access — see adminLogin() for the
+// separate, deliberately-harder path admins use instead.
+function buildUserFromCandidate_(query, candidate){
   if(candidate.type === 'individual'){
     return {
       mode: 'roster', matchType: 'individual', loginQuery: query,
       name: candidate.name, contact: contactOf_(candidate), class: candidate.class,
-      isAdmin: !!isAdmin
+      isAdmin: false
     };
   }
   const firstChild = candidate.children && candidate.children[0];
   return {
     mode: 'roster', matchType: 'parent', loginQuery: query,
     name: candidate.name, contact: firstChild ? contactOf_(firstChild) : '',
-    children: candidate.children, isAdmin: !!isAdmin
+    children: candidate.children, isAdmin: false
   };
 }
 
@@ -325,24 +347,35 @@ function completeSignIn_(user){
   showScreen('scan');
 }
 
-// Re-runs the same search used at sign-in, using the value they
-// originally typed, so admin status and (for a parent) the list of
-// children stay fresh across reloads without asking them to sign in
-// again. Keeps the last-known USER if the sheet can't be reached, or if
-// they no longer show up under that same query (e.g. removed from the
-// roster — better to keep working offline than to force a re-sign-in).
+// Refreshes on every reload so state doesn't go stale without asking
+// anyone to sign in again. Admin sessions re-check against the Admins
+// tab directly (they didn't come from a roster search); patron
+// sessions re-run the same search they signed in with, keeping the
+// last-known state if the sheet can't be reached or they no longer
+// show up (e.g. removed from the roster).
 async function refreshUserMatch(){
-  if(!USER || !USER.loginQuery){ applyAdminUI(!!(USER && USER.isAdmin)); return; }
+  if(!USER) return;
+  if(USER.matchType === 'admin'){
+    try{
+      const res = await fetch(CONFIG.apiUrl + '?action=verifyAdmin&email=' + encodeURIComponent(USER.contact));
+      const data = await res.json();
+      USER.isAdmin = !!data.isAdmin;
+      localStorage.setItem('stacks_user', JSON.stringify(USER));
+    }catch(e){ /* offline — keep last-known state */ }
+    applyAdminUI(!!USER.isAdmin);
+    return;
+  }
+  if(!USER.loginQuery){ applyAdminUI(false); return; }
   try{
     const res = await fetch(CONFIG.apiUrl + '?action=searchUsers&query=' + encodeURIComponent(USER.loginQuery));
     const data = await res.json();
     const match = (data.candidates || []).find(c => c.type === USER.matchType && c.name === USER.name);
     if(match){
-      USER = buildUserFromCandidate_(USER.loginQuery, match, data.isAdmin);
+      USER = buildUserFromCandidate_(USER.loginQuery, match);
       localStorage.setItem('stacks_user', JSON.stringify(USER));
     }
   }catch(e){ /* offline — keep last-known USER state */ }
-  applyAdminUI(!!USER.isAdmin);
+  applyAdminUI(false);
 }
 
 const onLoginSearchInput = debounce_(async function(){
@@ -354,13 +387,13 @@ const onLoginSearchInput = debounce_(async function(){
   try{
     const res = await fetch(CONFIG.apiUrl + '?action=searchUsers&query=' + encodeURIComponent(query));
     const data = await res.json();
-    renderLoginCandidates(data.candidates || [], query, !!data.isAdmin);
+    renderLoginCandidates(data.candidates || [], query);
   }catch(e){
     statusEl.textContent = 'Could not reach the sheet. Check your connection and try again.';
   }
 }, 300);
 
-function renderLoginCandidates(candidates, query, isAdmin){
+function renderLoginCandidates(candidates, query){
   const holder = document.getElementById('loginCandidates');
   if(!candidates.length){
     holder.innerHTML = '<p style="opacity:0.6;font-size:13px;">No matches yet — keep typing, or check with an admin.</p>';
@@ -374,9 +407,26 @@ function renderLoginCandidates(candidates, query, isAdmin){
     btn.textContent = c.type === 'individual'
       ? c.name + (c.class ? ' ('+c.class+')' : '')
       : c.name + ' (Parent of ' + c.children.map(ch=>ch.name).join(', ') + ')';
-    btn.onclick = () => completeSignIn_(buildUserFromCandidate_(query, c, isAdmin));
+    btn.onclick = () => completeSignIn_(buildUserFromCandidate_(query, c));
     holder.appendChild(btn);
   });
+}
+
+async function adminLogin(){
+  const email = document.getElementById('adminLoginEmail').value.trim();
+  const secret = document.getElementById('adminLoginSecret').value;
+  const errEl = document.getElementById('adminLoginError');
+  errEl.textContent = '';
+  if(!email || !secret){ errEl.textContent = 'Enter both the admin email and passcode.'; return; }
+  try{
+    const url = CONFIG.apiUrl + '?action=adminLogin&email=' + encodeURIComponent(email) + '&secret=' + encodeURIComponent(secret);
+    const res = await fetch(url);
+    const data = await res.json();
+    if(data.error){ errEl.textContent = data.error; return; }
+    completeSignIn_({ mode:'admin', matchType:'admin', name: data.email, contact: data.email, isAdmin: true });
+  }catch(e){
+    errEl.textContent = 'Could not reach the sheet. Check your connection and try again.';
+  }
 }
 
 function applyAdminUI(isAdmin){
@@ -666,7 +716,7 @@ async function loadApprovals(){
   const countEl = document.getElementById('approvalsCount');
   countEl.textContent = 'Loading…';
   try{
-    const res = await fetch(CONFIG.apiUrl + '?action=listApprovals&adminEmail=' + encodeURIComponent(USER.loginQuery||''));
+    const res = await fetch(CONFIG.apiUrl + '?action=listApprovals&adminEmail=' + encodeURIComponent(USER.contact||''));
     const data = await res.json();
     if(data.error){
       countEl.textContent = data.error;
@@ -712,7 +762,7 @@ async function approveOne(requestId){
     const dueInput = document.getElementById('due-'+requestId);
     const dueDate = dueInput ? dueInput.value : '';
     const url = CONFIG.apiUrl + '?action=approveRequest&requestId=' + encodeURIComponent(requestId)
-      + '&decision=Approve&adminEmail=' + encodeURIComponent(USER.loginQuery||'')
+      + '&decision=Approve&adminEmail=' + encodeURIComponent(USER.contact||'')
       + (dueDate ? '&dueDate=' + encodeURIComponent(dueDate) : '');
     const res = await fetch(url);
     const data = await res.json();
@@ -725,7 +775,7 @@ async function approveAllRequests(){
   if(!approvalsCache.length){ return; }
   if(!confirm('Approve all '+approvalsCache.length+' pending requests?')) return;
   try{
-    const url = CONFIG.apiUrl + '?action=approveAll&adminEmail=' + encodeURIComponent(USER.loginQuery||'');
+    const url = CONFIG.apiUrl + '?action=approveAll&adminEmail=' + encodeURIComponent(USER.contact||'');
     const res = await fetch(url);
     const data = await res.json();
     if(data.error){ alert(data.error); return; }

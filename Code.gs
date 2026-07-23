@@ -42,14 +42,15 @@
  *    rows directly into the Books tab (ItemID / Title / Author),
  *    leave Status blank — the app treats blank Status as Available.
  * 13. Run `setupConfigSheet` once. This creates a Config tab (Key/Value
- *    columns) pre-filled with a LoanDays row (default 14) and a
- *    MaxBorrowItems row (default 4). Edit either any time — the app
- *    reads this tab on every load, so there's no code change or
- *    redeploy needed to update them. Changing LoanDays changes the
- *    default due date for future approvals only, not books already
- *    borrowed. Changing MaxBorrowItems changes how many books someone
- *    can have Borrowed or Pending at once before new borrow requests
- *    are rejected.
+ *    columns) pre-filled with a LoanDays row (default 14), a
+ *    MaxBorrowItems row (default 4), and an AdminSecret row (default
+ *    "changeme" — change this immediately, it's the shared admin
+ *    passcode). Edit any of these any time — the app reads this tab on
+ *    every load, so there's no code change or redeploy needed to
+ *    update them. Changing LoanDays changes the default due date for
+ *    future approvals only, not books already borrowed. Changing
+ *    MaxBorrowItems changes how many books someone can have Borrowed
+ *    or Pending at once before new borrow requests are rejected.
  * 14. Reload the Google Sheet tab in your browser. A "📚 Library" menu
  *    appears next to Help — use its "Print QR labels" item any time to
  *    generate a printable label sheet (title, item ID, and a scannable
@@ -71,15 +72,30 @@
  *   themself (their own separate MaxBorrowItems allowance, tracked
  *   under their own name) or pick a specific child — each borrow scan
  *   asks which one it's for.
- * - Whether someone is an admin is checked the same way as before:
- *   their exact typed value is compared against the Admins tab. This
- *   is a plain string match, not a verified identity — same trust
- *   model as everything else in this app, fine for a small trusted
- *   community but worth knowing if that ever changes.
  * - Since matching is loose, there's no separate "is this really you"
- *   gate at sign-in — the safeguard against someone picking the wrong
- *   or someone else's name is the existing borrow-approval step below,
- *   which every borrow request already goes through regardless.
+ *   gate at patron sign-in — the safeguard against someone picking the
+ *   wrong or someone else's name is the existing borrow-approval step
+ *   below, which every borrow request already goes through regardless.
+ * - Admins do NOT sign in this way. Patron sign-in never grants admin
+ *   access, even for a listed admin email — see "HOW ADMIN LOGIN
+ *   WORKS" below.
+ *
+ * HOW ADMIN LOGIN WORKS (deliberately separate from patron sign-in):
+ * - The landing page has a small "Admin login" link, separate from the
+ *   patron search box. It asks for an admin's email AND a shared
+ *   passcode — the Config tab's AdminSecret — which every admin uses
+ *   in common. Both must be correct: the email must be listed in the
+ *   Admins tab, and the passcode must match AdminSecret exactly.
+ * - Change AdminSecret in the Config tab any time — takes effect
+ *   immediately, no redeploy. Do this if you suspect it's been shared
+ *   too widely, or periodically as routine hygiene.
+ * - Without this, anyone who merely knew or guessed a listed admin's
+ *   email could get full admin access through patron sign-in alone —
+ *   this closes that gap. It is still not a strong security boundary
+ *   (the passcode travels in a URL query string, since this whole app
+ *   only uses GET requests — visible in browser history and Apps
+ *   Script's execution logs, not a true secret channel), just a
+ *   meaningfully higher bar than "type an email you happen to know."
  *
  * HOW APPROVAL WORKS:
  * - When someone scans an available book to borrow it, the book's
@@ -195,11 +211,20 @@ function setupConfigSheet() {
 
   const defaults = {
     LoanDays: String(LOAN_DAYS),
-    MaxBorrowItems: String(MAX_BORROW_ITEMS)
+    MaxBorrowItems: String(MAX_BORROW_ITEMS),
+    AdminSecret: 'changeme'
   };
   Object.keys(defaults).forEach(key => {
     if (!existingKeys[key]) sh.appendRow([key, defaults[key]]);
   });
+}
+
+// Shared passcode all admins use, on top of their email, to sign in
+// through the separate admin login. Change it any time in the Config
+// tab — takes effect immediately, no redeploy.
+function getAdminSecret_() {
+  const cfg = getConfig();
+  return String(cfg.AdminSecret || '').trim();
 }
 
 // Reads the loan period from the Config tab (LoanDays), falling back to
@@ -336,6 +361,12 @@ function doGet(e) {
         break;
       case 'searchUsers':
         result = searchUsers(e.parameter.query);
+        break;
+      case 'adminLogin':
+        result = adminLogin(e.parameter.email, e.parameter.secret);
+        break;
+      case 'verifyAdmin':
+        result = verifyAdmin(e.parameter.email);
         break;
       case 'listApprovals':
         result = listPendingApprovals(e.parameter.adminEmail);
@@ -632,35 +663,39 @@ function userRowToObject_(row) {
 }
 
 /**
- * Sign-in and admin lookup both go through this: a loose, case-insensitive
- * substring match against Class/Name/Parent/Email/Phone (not an exact
- * match — "yuki" matches "Yuki Sato", a partial phone number matches
- * the full one, etc). Every matching row is returned as an "individual"
- * candidate. Rows that share a non-empty Parent value also produce one
- * "parent" candidate per distinct parent name, listing every child
- * under that parent (not just the ones this particular query matched),
- * so a parent typing their own name/phone sees all their kids together
- * and gets the option to sign in as themself instead of a specific child.
- * isAdmin compares the raw query itself against the Admins tab, same
- * plain-string check used everywhere else in this app — not a verified
- * identity.
+ * Patron sign-in and the admin Users lookup both go through this: a
+ * loose, case-insensitive substring match against
+ * Class/Name/Parent/Email/Phone (not an exact match — "yuki" matches
+ * "Yuki Sato", a partial phone number matches the full one, etc). Every
+ * matching row is returned as an "individual" candidate. Rows that
+ * share a non-empty Parent value also produce one "parent" candidate
+ * per distinct parent name, listing every child under that parent (not
+ * just the ones this particular query matched), so a parent typing
+ * their own name/phone sees all their kids together and gets the
+ * option to sign in as themself instead of a specific child.
+ *
+ * This no longer grants admin status — admins sign in through the
+ * separate adminLogin action instead, which requires the shared
+ * AdminSecret on top of a listed email. Otherwise anyone who merely
+ * knew (or guessed) an admin's email could get admin access here with
+ * no further proof.
  *
  * SECURITY NOTE: this action is intentionally public (it's the sign-in
- * entry point, called before anyone has proven who they are) and now
- * does a loose substring match instead of requiring an exact
- * email/phone. That means anyone who can reach the web app URL —
- * published in this public repo's index.html — can enumerate rows of
- * this roster (names, classes, parent names, emails, phone numbers)
- * without signing in, by trying short/common substrings. The 2-
- * character minimum and 25-result cap below raise the bar slightly but
- * don't prevent a determined, scripted attempt. Worth knowing since
- * this roster includes children's information — ask if you want this
- * hardened further (e.g. withholding email/phone from the response, a
- * longer minimum query, or rate limiting).
+ * entry point, called before anyone has proven who they are) and does
+ * a loose substring match instead of requiring an exact email/phone.
+ * That means anyone who can reach the web app URL — published in this
+ * public repo's index.html — can enumerate rows of this roster (names,
+ * classes, parent names, emails, phone numbers) without signing in, by
+ * trying short/common substrings. The 2-character minimum and
+ * 25-result cap below raise the bar slightly but don't prevent a
+ * determined, scripted attempt. Worth knowing since this roster
+ * includes children's information — ask if you want this hardened
+ * further (e.g. withholding email/phone from the response, a longer
+ * minimum query, or rate limiting).
  */
 function searchUsers(query) {
   const target = String(query || '').trim().toLowerCase();
-  if (target.length < 2) return { candidates: [], isAdmin: false };
+  if (target.length < 2) return { candidates: [] };
   const { data } = getUsersSheet_();
   const rows = [];
   for (let i = 1; i < data.length; i++) {
@@ -691,7 +726,30 @@ function searchUsers(query) {
     candidates.push({ type: 'parent', name: group.displayName, children: group.children });
   });
 
-  return { candidates, isAdmin: isAdmin_(query) };
+  return { candidates };
+}
+
+/**
+ * Separate admin sign-in, kept apart from patron sign-in on purpose.
+ * Requires BOTH a listed Admins-tab email AND the shared AdminSecret
+ * from the Config tab — a patron (or anyone else) who merely knows or
+ * guesses an admin's email can no longer get admin access through
+ * searchUsers alone.
+ */
+function adminLogin(email, secret) {
+  const cleanEmail = String(email || '').trim();
+  if (!cleanEmail || !secret) return { error: 'Enter both the admin email and passcode' };
+  if (!isAdmin_(cleanEmail)) return { error: 'Not a recognized admin email or passcode' };
+  const expected = getAdminSecret_();
+  if (!expected || String(secret).trim() !== expected) return { error: 'Not a recognized admin email or passcode' };
+  return { ok: true, email: cleanEmail };
+}
+
+// Re-checks an existing admin session still has a listed email — used
+// on reload instead of searchUsers, since admin sessions don't come
+// from a roster search in the first place.
+function verifyAdmin(email) {
+  return { isAdmin: !!email && isAdmin_(email) };
 }
 
 function listBooks() {
