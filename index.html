@@ -722,12 +722,18 @@ async function commitScanQueue(){
   const queue = scanQueue.slice();
   scanQueue = [];
   renderScanQueue();
+  // An admin scanning — whether for themself or, via "Use for scan", on
+  // behalf of a patron they looked up — is already the authority that
+  // would otherwise approve the request a moment later, so borrows they
+  // scan skip the Pending step entirely (see scanBook in Code.gs).
+  const adminEmail = (USER && USER.matchType === 'admin') ? USER.contact : '';
   const results = [];
   for(const q of queue){
     area.innerHTML = '<p style="opacity:0.6;font-family:JetBrains Mono,monospace;font-size:12px;">Processing '+escapeHtml(q.title)+'…</p>';
     try{
       const url = CONFIG.apiUrl + '?action=scan&itemId=' + encodeURIComponent(q.itemId)
-        + '&name=' + encodeURIComponent(q.name) + '&contact=' + encodeURIComponent(q.contact || '');
+        + '&name=' + encodeURIComponent(q.name) + '&contact=' + encodeURIComponent(q.contact || '')
+        + (adminEmail ? '&adminEmail=' + encodeURIComponent(adminEmail) : '');
       const res = await fetch(url);
       const data = await res.json();
       results.push({ q, data });
