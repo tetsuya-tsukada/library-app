@@ -8,10 +8,12 @@
  * 4. Update SHEET_ID below if this script is NOT bound to the sheet
  *    (if you opened it via Extensions > Apps Script from inside the
  *    sheet, you can leave SHEET_ID as '' — it will use the active sheet).
- * 5. Run `setupSheets` once from the editor (select it in the function
+ * 5. Run `setupSheets` from the editor (select it in the function
  *    dropdown, click Run). This creates the Books, Transactions, Admins,
  *    Approvals, and User List tabs with the right headers. Approve the
- *    permissions prompt.
+ *    permissions prompt. Safe to run again any time (e.g. after pasting
+ *    in an updated version of this file) — it only creates whatever's
+ *    missing and never clears a tab that already has data in it.
  * 6. Fill in the "User List" tab: one row per person, columns Class,
  *    Name, Parent, Email, Phone. This is the roster everyone signs in
  *    against — there is no separate password. A row with no Parent is
@@ -141,19 +143,23 @@ function getSS() {
 function setupSheets() {
   const ss = getSS();
   let books = ss.getSheetByName(BOOKS_SHEET);
-  if (!books) books = ss.insertSheet(BOOKS_SHEET);
-  books.clear();
-  books.appendRow(['ItemID', 'Title', 'Author', 'Status', 'BorrowerName', 'BorrowerContact', 'BorrowDate', 'DueDate']);
-  books.setFrozenRows(1);
+  if (!books) {
+    books = ss.insertSheet(BOOKS_SHEET);
+    books.appendRow(['ItemID', 'Title', 'Author', 'Status', 'BorrowerName', 'BorrowerContact', 'BorrowDate', 'DueDate']);
+    books.setFrozenRows(1);
+  }
 
   let tx = ss.getSheetByName(TX_SHEET);
-  if (!tx) tx = ss.insertSheet(TX_SHEET);
-  tx.clear();
-  tx.appendRow(['Timestamp', 'ItemID', 'Title', 'Action', 'BorrowerName', 'BorrowerContact']);
-  tx.setFrozenRows(1);
+  if (!tx) {
+    tx = ss.insertSheet(TX_SHEET);
+    tx.appendRow(['Timestamp', 'ItemID', 'Title', 'Action', 'BorrowerName', 'BorrowerContact']);
+    tx.setFrozenRows(1);
+  }
 
-  // Admins and Approvals are NOT cleared if they already exist, so
-  // re-running this setup doesn't wipe your admin list or approval history.
+  // Every tab here is safe to re-run: existing sheets are never
+  // cleared, only created (and headers self-healed) if missing — so
+  // running setupSheets again never wipes your books, transaction
+  // history, admin list, approvals, or roster.
   let admins = ss.getSheetByName(ADMINS_SHEET);
   if (!admins) {
     admins = ss.insertSheet(ADMINS_SHEET);
