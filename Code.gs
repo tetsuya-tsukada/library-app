@@ -96,8 +96,14 @@
  *   tab, default 24) — after that, the app asks for another scan. This
  *   expiry is enforced entirely on that device (a timestamp in its own
  *   browser storage); the code itself never expires or rotates on its
- *   own. Changing SiteAccessCode in the Config tab is the only way to
- *   invalidate every device at once (e.g. if a printout goes missing).
+ *   own. Use the "📚 Library" menu's "Regenerate site access code" item
+ *   any time to have it generate and save a fresh random one instead of
+ *   editing the Config cell by hand — e.g. if a printout goes missing,
+ *   or just as routine hygiene. That's the only way to invalidate every
+ *   device at once: it takes effect immediately, blocking every device
+ *   currently unlocked with the old code (this one included) until it
+ *   scans the new QR — print a fresh one with "Print site access QR
+ *   code" right after.
  * - This applies equally to admins — an admin who hasn't scanned the
  *   code on their device can't reach the admin login screen either.
  *   It's a separate layer entirely from admin login/AdminSecret, which
@@ -446,6 +452,7 @@ function onOpen(e) {
     .createMenu('📚 Library')
     .addItem('Print QR labels', 'openPrintLabelsDialog')
     .addItem('Print site access QR code', 'openSiteAccessQrDialog')
+    .addItem('Regenerate site access code', 'regenerateSiteAccessCode')
     .addToUi();
 }
 
@@ -542,6 +549,56 @@ const PRINT_LABELS_HTML = `<!DOCTYPE html>
     });
   </script>
 </body></html>`;
+
+// A 32-character mix of letters, digits, and symbols — plenty of entropy
+// for a shared secret, and printed only as a QR code so nobody ever
+// needs to type or read it out loud. Excludes 0/O/1/l/I purely so a
+// human proofreading the Config cell isn't tripped up by look-alikes;
+// scanning doesn't care either way.
+function generateSiteAccessCode_() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789~!@#$%^&*()-_=+[]{}<>?|';
+  let out = '';
+  for (let i = 0; i < 32; i++) {
+    out += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return out;
+}
+
+// Overwrites Config's SiteAccessCode with a fresh random value — e.g.
+// after a printout goes missing, or just as routine hygiene. This is
+// immediate and global: it invalidates every device currently unlocked
+// with the old code (not just new logins — see isValidSiteCode_, which
+// always checks against whatever's in Config right now), not only new
+// printouts, so it asks for confirmation first. Run "Print site access
+// QR code" again right after to get a QR for the new value; the old
+// printout stops working the moment this runs.
+function regenerateSiteAccessCode() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.alert(
+    'Regenerate site access code?',
+    'This immediately blocks every device currently unlocked with the old code — including this one — until it scans the new QR. Run "Print site access QR code" again right after to print the replacement. Continue?',
+    ui.ButtonSet.YES_NO
+  );
+  if (response !== ui.Button.YES) return;
+
+  const sh = getSS().getSheetByName(CONFIG_SHEET);
+  if (!sh) {
+    ui.alert('Run setupConfigSheet first, then try again.');
+    return;
+  }
+  const data = sh.getDataRange().getValues();
+  let rowNum = -1;
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][0]).trim() === 'SiteAccessCode') { rowNum = i + 1; break; }
+  }
+  const newCode = generateSiteAccessCode_();
+  if (rowNum === -1) {
+    sh.appendRow(['SiteAccessCode', newCode]);
+  } else {
+    sh.getRange(rowNum, 2).setValue(newCode);
+  }
+  ui.alert('New site access code generated. Use "Print site access QR code" now to print and post the replacement.');
+}
 
 // Generates a QR code for the site access code, meant to be printed and
 // posted only somewhere that already requires physical presence to
