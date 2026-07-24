@@ -169,10 +169,10 @@
 
   <nav class="topnav">
     <button id="nav-scan" onclick="showScreen('scan')">Scan</button>
-    <button id="nav-shelf" onclick="showScreen('shelf')">Shelf</button>
-    <button id="nav-approvals" onclick="showScreen('approvals')">Approvals</button>
-    <button id="nav-users" onclick="showScreen('users')">Users</button>
-    <button id="nav-summary" onclick="showScreen('summary')">Summary</button>
+    <button id="nav-shelf" style="display:none;" onclick="showScreen('shelf')">Shelf</button>
+    <button id="nav-approvals" style="display:none;" onclick="showScreen('approvals')">Approvals</button>
+    <button id="nav-users" style="display:none;" onclick="showScreen('users')">Users</button>
+    <button id="nav-summary" style="display:none;" onclick="showScreen('summary')">Summary</button>
   </nav>
 
   <main>
@@ -332,7 +332,7 @@ function showScreen(name){
 async function init(){
   updateWhoBadge();
   await loadRemoteConfig();
-  if(!USER){ showScreen('identify'); return; }
+  if(!USER){ applyAdminUI(false); showScreen('identify'); return; }
   await refreshUserMatch();
   showScreen('scan');
 }
