@@ -59,7 +59,11 @@
  *    QR code per book) right from the Sheet. This does not require the
  *    web app at all, and is the only place labels are printed from —
  *    the scanner app itself only shows a single label right after
- *    adding one book.
+ *    adding one book. Select one or more rows in the Books tab first
+ *    (click-drag the row numbers, or ctrl/cmd-click to select several)
+ *    to print labels for just those books — handy when you've added a
+ *    few new ones and don't want to reprint the whole catalog. With
+ *    nothing meaningfully selected, it prints every book.
  *
  * HOW SIGN-IN WORKS (no Google/Facebook login, no password — everyone
  * matches against the User List tab):
@@ -332,15 +336,48 @@ function onOpen(e) {
     .addToUi();
 }
 
+// If one or more Books rows are selected when "Print QR labels" is run,
+// only those rows print — so adding one new book doesn't mean reprinting
+// the whole catalog. A single-cell selection (just clicking somewhere,
+// the normal state right after opening the sheet) doesn't count as an
+// intentional selection and falls back to printing everything.
+function getSelectedBookIds_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getActiveSheet();
+  if (sheet.getName() !== BOOKS_SHEET) return [];
+  const range = ss.getActiveRange();
+  if (!range) return [];
+  if (range.getNumRows() === 1 && range.getNumColumns() === 1) return [];
+
+  const startRow = range.getRow();
+  const lastRow = startRow + range.getNumRows() - 1;
+  const firstDataRow = Math.max(startRow, 2); // never treat the header row as a book
+  if (lastRow < firstDataRow) return [];
+
+  const ids = [];
+  for (let r = firstDataRow; r <= lastRow; r++) {
+    const id = sheet.getRange(r, 1).getValue();
+    if (id) ids.push(String(id).trim());
+  }
+  return ids;
+}
+
 function openPrintLabelsDialog() {
-  const { books } = listBooks();
+  const { books: allBooks } = listBooks();
+  const selectedIds = getSelectedBookIds_();
+  const books = selectedIds.length
+    ? allBooks.filter(b => selectedIds.indexOf(String(b.ItemID || '').trim()) !== -1)
+    : allBooks;
   const items = books.map(b => ({ itemId: String(b.ItemID || ''), title: String(b.Title || '') }));
   // Guard against breaking out of the <script> tag if a title ever contained "</script".
   const json = JSON.stringify(items).replace(/</g, '\\u003c');
   const template = HtmlService.createTemplate(PRINT_LABELS_HTML);
   template.booksJson = json;
   const html = template.evaluate().setWidth(760).setHeight(600);
-  SpreadsheetApp.getUi().showModalDialog(html, 'Print QR labels');
+  const title = selectedIds.length
+    ? 'Print QR labels (' + books.length + ' selected)'
+    : 'Print QR labels (all ' + books.length + ')';
+  SpreadsheetApp.getUi().showModalDialog(html, title);
 }
 
 const PRINT_LABELS_HTML = `<!DOCTYPE html>
