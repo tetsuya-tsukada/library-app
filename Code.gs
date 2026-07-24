@@ -48,14 +48,16 @@
  *    MaxBorrowItems row (default 4), an AdminSecret row (default
  *    "changeme" — change this immediately, it's the shared admin
  *    passcode), a SiteAccessCode row (default "changeme-site-code" —
- *    change this immediately too, see "HOW SITE ACCESS WORKS" below),
- *    and a SiteAccessTTLHours row (default 24). Edit any of these any
- *    time — the app reads this tab on every load, so there's no code
- *    change or redeploy needed to update them. Changing LoanDays
- *    changes the default due date for future approvals only, not books
- *    already borrowed. Changing MaxBorrowItems changes how many books
- *    someone can have Borrowed or Pending at once before new borrow
- *    requests are rejected.
+ *    change this immediately too, see "HOW SITE ACCESS WORKS" below), a
+ *    SiteAccessTTLHours row (default 24), and a SiteUrl row (your
+ *    GitHub Pages URL, e.g. https://youruser.github.io/library-app/ —
+ *    update it if you ever move the app to a different URL). Edit any
+ *    of these any time — the app reads this tab on every load, so
+ *    there's no code change or redeploy needed to update them. Changing
+ *    LoanDays changes the default due date for future approvals only,
+ *    not books already borrowed. Changing MaxBorrowItems changes how
+ *    many books someone can have Borrowed or Pending at once before new
+ *    borrow requests are rejected.
  * 14. Reload the Google Sheet tab in your browser. A "📚 Library" menu
  *    appears next to Help — use its "Print QR labels" item any time to
  *    generate a printable label sheet (title, item ID, and a scannable
@@ -83,6 +85,13 @@
  *   is already required, like inside the library room, and a device
  *   genuinely can't do anything useful with the app — not even reach
  *   the sign-in screen — until someone has scanned it there.
+ * - When the Config tab's SiteUrl is set, that QR encodes a direct link
+ *   (SiteUrl + ?code=...) instead of the bare code, so scanning it with
+ *   an ordinary phone camera app opens the site already unlocked — no
+ *   need to open the app first and use its own in-app scanner (the
+ *   in-app scanner still works too, and understands either form). The
+ *   app strips the code back out of the address bar immediately after
+ *   reading it, so it never lingers in browser history or a bookmark.
  * - Scanning it unlocks that one device for SiteAccessTTLHours (Config
  *   tab, default 24) — after that, the app asks for another scan. This
  *   expiry is enforced entirely on that device (a timestamp in its own
@@ -316,7 +325,8 @@ function setupConfigSheet() {
     MaxBorrowItems: String(MAX_BORROW_ITEMS),
     AdminSecret: 'changeme',
     SiteAccessCode: 'changeme-site-code',
-    SiteAccessTTLHours: String(SITE_ACCESS_TTL_HOURS)
+    SiteAccessTTLHours: String(SITE_ACCESS_TTL_HOURS),
+    SiteUrl: 'https://tetsuya-tsukada.github.io/library-app/'
   };
   Object.keys(defaults).forEach(key => {
     if (!existingKeys[key]) sh.appendRow([key, defaults[key]]);
@@ -362,6 +372,15 @@ function getSiteAccessTTLHours_() {
   const cfg = getConfig();
   const hours = parseInt(cfg.SiteAccessTTLHours, 10);
   return (!isNaN(hours) && hours > 0) ? hours : SITE_ACCESS_TTL_HOURS;
+}
+
+// The deployed web app's URL — lets the site access QR encode a direct
+// link (see openSiteAccessQrDialog) instead of just the bare code, so
+// scanning it with an ordinary phone camera app opens the site already
+// unlocked, no need to open the app first and use its in-app scanner.
+function getSiteUrl_() {
+  const cfg = getConfig();
+  return String(cfg.SiteUrl || '').trim();
 }
 
 // Fails closed: if SiteAccessCode hasn't been set up yet, nothing gets
@@ -524,21 +543,31 @@ const PRINT_LABELS_HTML = `<!DOCTYPE html>
   </script>
 </body></html>`;
 
-// Generates a QR code encoding the Config tab's SiteAccessCode, meant to
-// be printed and posted only somewhere that already requires physical
-// presence to reach (e.g. inside the library room itself) — see "HOW
-// SITE ACCESS WORKS" above. Deliberately only reachable from here, not
-// from the web app, so producing a fresh printout always requires
-// someone with edit access to this Sheet.
+// Generates a QR code for the site access code, meant to be printed and
+// posted only somewhere that already requires physical presence to
+// reach (e.g. inside the library room itself) — see "HOW SITE ACCESS
+// WORKS" above. Deliberately only reachable from here, not from the web
+// app, so producing a fresh printout always requires someone with edit
+// access to this Sheet.
+//
+// When SiteUrl (Config tab) is set, the QR encodes a direct link
+// (SiteUrl + ?code=...) instead of the bare code — scanning it with an
+// ordinary phone camera app opens the site already unlocked, no need to
+// open the app first and use its in-app scanner. Falls back to the bare
+// code if SiteUrl is blank; the app's in-app scanner understands both.
 function openSiteAccessQrDialog() {
   const code = getSiteAccessCode_();
   if (!code) {
     SpreadsheetApp.getUi().alert('Set a SiteAccessCode value in the Config tab first (run setupConfigSheet if the row is missing), then try again.');
     return;
   }
+  const siteUrl = getSiteUrl_();
+  const qrText = siteUrl
+    ? siteUrl + (siteUrl.indexOf('?') === -1 ? '?' : '&') + 'code=' + encodeURIComponent(code)
+    : code;
   const ttlHours = getSiteAccessTTLHours_();
   const template = HtmlService.createTemplate(SITE_ACCESS_QR_HTML);
-  template.codeJson = JSON.stringify(code).replace(/</g, '\\u003c');
+  template.qrTextJson = JSON.stringify(qrText).replace(/</g, '\\u003c');
   template.ttlHours = ttlHours;
   const html = template.evaluate().setWidth(420).setHeight(480);
   SpreadsheetApp.getUi().showModalDialog(html, 'Site access QR code');
@@ -560,10 +589,10 @@ const SITE_ACCESS_QR_HTML = `<!DOCTYPE html>
   <div class="toolbar"><button onclick="window.print()">Print</button></div>
   <h3>Scan to unlock Stacks</h3>
   <div id="qr"></div>
-  <p class="note">Post this only where patrons already have physical access (e.g. inside the library room) — anyone who scans it can use the app from their device for <?!= ttlHours ?> hour(s), then needs to scan again. Changing SiteAccessCode in the Config tab makes any old printouts stop working immediately.</p>
+  <p class="note">Post this only where patrons already have physical access (e.g. inside the library room) — scanning it with an ordinary phone camera opens the site already unlocked, no need to open the app first. Unlocks that device for <?!= ttlHours ?> hour(s), then it needs to scan again. Changing SiteAccessCode in the Config tab makes any old printouts stop working immediately.</p>
   <script>
     window.addEventListener('load', () => {
-      new QRCode(document.getElementById('qr'), { text: <?!= codeJson ?>, width: 220, height: 220 });
+      new QRCode(document.getElementById('qr'), { text: <?!= qrTextJson ?>, width: 220, height: 220 });
     });
   </script>
 </body></html>`;
