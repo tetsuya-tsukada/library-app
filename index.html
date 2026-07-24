@@ -412,9 +412,23 @@ async function toggleGateScanner(){
   });
 }
 
+// The QR generated from the Sheet (see openSiteAccessQrDialog in
+// Code.gs) encodes a direct link (siteUrl?code=...) when one's
+// configured, or just the bare code otherwise — accept either so the
+// in-app scanner works no matter which form got printed.
+function extractSiteCode_(decodedText){
+  const trimmed = decodedText.trim();
+  try{
+    const url = new URL(trimmed);
+    const codeParam = url.searchParams.get('code');
+    if(codeParam) return codeParam;
+  }catch(e){ /* not a URL — treat the whole string as the code */ }
+  return trimmed;
+}
+
 async function onGateScanSuccess(decodedText){
   const statusEl = document.getElementById('gateStatus');
-  const code = decodedText.trim();
+  const code = extractSiteCode_(decodedText);
   await gateHtml5QrCode.stop();
   document.getElementById('gateReaderWrap').style.display = 'none';
   document.getElementById('gateScanBtn').textContent = 'Scan security code';
@@ -1297,13 +1311,31 @@ function renderQr(elId, text){
   }, 50);
 }
 
-SITE_ACCESS = loadSiteAccess_();
-if(SITE_ACCESS){
-  document.getElementById('mainApp').style.display = '';
-  init();
-} else {
-  document.getElementById('siteGate').style.display = 'flex';
+// A phone's ordinary camera app recognizes the site access QR as a URL
+// and opens it directly (see openSiteAccessQrDialog in Code.gs) — so a
+// device can arrive here already carrying ?code=... instead of going
+// through the in-app scanner at all. The URL is cleaned immediately
+// either way, so the code never lingers in the address bar, history, or
+// a bookmark.
+async function bootstrapSiteAccess_(){
+  const urlCode = new URLSearchParams(window.location.search).get('code');
+  if(urlCode){
+    window.history.replaceState({}, '', window.location.origin + window.location.pathname);
+    try{
+      const res = await fetch(apiUrl_('verifySiteCode', { code: urlCode }));
+      const data = await res.json();
+      if(data.ok) saveSiteAccess_(urlCode, data.ttlHours || 24);
+    }catch(e){ /* fall through to the normal gate check below */ }
+  }
+  SITE_ACCESS = loadSiteAccess_();
+  if(SITE_ACCESS){
+    document.getElementById('mainApp').style.display = '';
+    init();
+  } else {
+    document.getElementById('siteGate').style.display = 'flex';
+  }
 }
+bootstrapSiteAccess_();
 </script>
 </body>
 </html>
