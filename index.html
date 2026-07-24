@@ -306,8 +306,9 @@ let html5QrCode = null;
 let scanning = false;
 let bookCache = [];
 let scanQueue = []; // { itemId, title, action, name, contact }
+let unassignedBorrows = []; // { itemId, title } — borrows scanned by a parent session, not yet assigned to a child/self
 let pendingScans = []; // itemIds waiting to be looked up (fed from onScanSuccess faster than we can process)
-let processingItemId = null; // itemId currently mid-lookup/child-picker, so repeat frames of it are ignored
+let processingItemId = null; // itemId currently mid-lookup, so repeat frames of it are ignored
 let scanProcessing = false; // true while the pendingScans drain loop is running
 
 function showScreen(name){
@@ -383,6 +384,7 @@ function completeSignIn_(user){
 // identity. Only touches the result/queue area, not the identity itself.
 function resetScanResult_(){
   scanQueue = [];
+  unassignedBorrows = [];
   pendingScans = [];
   processingItemId = null;
   scanProcessing = false;
@@ -541,11 +543,13 @@ async function toggleScanner(){
     await stopScanningSession();
     return;
   }
-  scanQueue = [];
+  // Deliberately not clearing scanQueue/unassignedBorrows here — "Scan
+  // more" (see renderScanMoreOrReview_) re-enters through this same
+  // function, and anything already assigned or awaiting assignment from
+  // an earlier round needs to survive into this one.
   pendingScans = [];
   processingItemId = null;
   scanProcessing = false;
-  renderScanQueue();
   document.getElementById('resultArea').innerHTML = '';
   readerWrap.style.display='block';
   btn.textContent='Done scanning';
@@ -570,13 +574,23 @@ async function stopScanningSession(){
   readerWrap.style.display='none';
   btn.textContent='Start scanning';
   scanning=false;
-  // The last scan or two may still be mid-lookup (or, for a parent
-  // session, waiting on a child-picker tap) when the camera stops —
-  // without this, the confirmation could be built and shown before those
-  // land in scanQueue, so it'd display (and let you confirm) fewer items
-  // than actually end up queued.
+  // The last scan or two may still be mid-lookup when the camera stops —
+  // without this, we could decide what to show next before those land in
+  // scanQueue/unassignedBorrows, undercounting either one.
   await waitForScansToSettle_();
-  if(scanQueue.length){
+  if(USER && USER.matchType === 'parent' && !ACTING_AS){
+    // A parent session batches the "who's borrowing" decision to once per
+    // round (see renderGroupAssignPrompt_) and, after that, offers a
+    // choice to scan another round (e.g. for a different child, or
+    // themself) before finally reviewing everything together.
+    if(unassignedBorrows.length){
+      renderGroupAssignPrompt_();
+    } else if(scanQueue.length){
+      renderScanMoreOrReview_();
+    } else {
+      document.getElementById('resultArea').innerHTML = '';
+    }
+  } else if(scanQueue.length){
     renderQueueConfirmation();
   } else {
     document.getElementById('resultArea').innerHTML = '';
@@ -639,7 +653,11 @@ async function lookupAndQueueScan_(itemId){
       if(ACTING_AS){
         addToQueue_(itemId, data.title, 'borrow', ACTING_AS.name, ACTING_AS.contact);
       } else if(USER.matchType === 'parent'){
-        await pauseForChildPicker_(itemId, data.title);
+        // Don't interrupt scanning to ask who this is for — that's
+        // batched into a single prompt for the whole round once scanning
+        // stops (see renderGroupAssignPrompt_).
+        unassignedBorrows.push({ itemId, title: data.title });
+        renderScanQueue();
       } else {
         addToQueue_(itemId, data.title, 'borrow', USER.name, USER.contact);
       }
@@ -653,39 +671,55 @@ async function lookupAndQueueScan_(itemId){
   }
 }
 
-function pauseForChildPicker_(itemId, title){
-  return new Promise(resolve => {
-    const area = document.getElementById('resultArea');
-    area.innerHTML = `
-      <div class="stamp-card">
-        <div class="eyebrow">Who is this for?</div>
-        <h2>${escapeHtml(title)}</h2>
-        <div id="childPickerButtons" style="margin-top:14px;display:flex;flex-direction:column;gap:8px;"></div>
-      </div>`;
-    const holder = document.getElementById('childPickerButtons');
-    USER.children.forEach(child=>{
-      const btn = document.createElement('button');
-      btn.className = 'btn btn-outline';
-      btn.textContent = child.name + (child.class ? ' ('+child.class+')' : '');
-      btn.onclick = () => {
-        addToQueue_(itemId, title, 'borrow', child.name, contactOf_(child));
-        area.innerHTML = '';
-        resolve();
-      };
-      holder.appendChild(btn);
-    });
-    const selfBtn = document.createElement('button');
-    selfBtn.className = 'btn btn-primary';
-    selfBtn.textContent = 'Borrow for myself ('+USER.name+')';
-    // Tagged "(Parent)" so this can never collide with a child of the same
-    // name for the per-name borrow limit, and reads clearly in the Sheet.
-    selfBtn.onclick = () => {
-      addToQueue_(itemId, title, 'borrow', USER.name + ' (Parent)', USER.contact);
-      area.innerHTML = '';
-      resolve();
-    };
-    holder.appendChild(selfBtn);
+// Asked once per scanning round (after Stop), for every borrow scanned by
+// a parent session this round — not once per book — then assigns all of
+// them to whichever child (or the parent themself) is picked.
+function renderGroupAssignPrompt_(){
+  const area = document.getElementById('resultArea');
+  const count = unassignedBorrows.length;
+  area.innerHTML = `
+    <div class="stamp-card">
+      <div class="eyebrow">Who is this for?</div>
+      <h2>${count} book${count===1?'':'s'} to borrow</h2>
+      <div id="groupAssignButtons" style="margin-top:14px;display:flex;flex-direction:column;gap:8px;"></div>
+    </div>`;
+  const holder = document.getElementById('groupAssignButtons');
+  USER.children.forEach(child=>{
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-outline';
+    btn.textContent = child.name + (child.class ? ' ('+child.class+')' : '');
+    btn.onclick = () => assignUnassignedBorrows_(child.name, contactOf_(child));
+    holder.appendChild(btn);
   });
+  const selfBtn = document.createElement('button');
+  selfBtn.className = 'btn btn-primary';
+  selfBtn.textContent = 'Borrow for myself ('+USER.name+')';
+  // Tagged "(Parent)" so this can never collide with a child of the same
+  // name for the per-name borrow limit, and reads clearly in the Sheet.
+  selfBtn.onclick = () => assignUnassignedBorrows_(USER.name + ' (Parent)', USER.contact);
+  holder.appendChild(selfBtn);
+}
+
+function assignUnassignedBorrows_(name, contact){
+  const items = unassignedBorrows.splice(0, unassignedBorrows.length);
+  items.forEach(it => addToQueue_(it.itemId, it.title, 'borrow', name, contact));
+  renderScanMoreOrReview_();
+}
+
+// Offered after each round instead of jumping straight to the final
+// confirmation, so a parent can scan another batch (say, for themself
+// after scanning for a child) before reviewing everything together.
+function renderScanMoreOrReview_(){
+  const area = document.getElementById('resultArea');
+  area.innerHTML = `
+    <div class="stamp-card">
+      <div class="eyebrow">Nice work</div>
+      <h2>${scanQueue.length} item${scanQueue.length===1?'':'s'} so far</h2>
+      <button class="btn btn-primary" id="scanMoreBtn">Scan more</button>
+      <button class="btn btn-outline" style="margin-top:10px;" id="reviewQueueBtn">Review &amp; confirm</button>
+    </div>`;
+  document.getElementById('scanMoreBtn').onclick = () => { area.innerHTML = ''; toggleScanner(); };
+  document.getElementById('reviewQueueBtn').onclick = renderQueueConfirmation;
 }
 
 function addToQueue_(itemId, title, action, name, contact){
@@ -716,18 +750,32 @@ function flashScanToast_(msg){
 function renderScanQueue(){
   const el = document.getElementById('scanQueueList');
   if(!el) return;
-  if(!scanQueue.length){ el.innerHTML=''; return; }
-  el.innerHTML = '<p class="section-sub" style="margin:10px 0 6px;">'+scanQueue.length+' item'+(scanQueue.length===1?'':'s')+' scanned</p>' +
-    scanQueue.map((q,i) => `
-      <div class="book-row">
-        <div class="meta">
-          <div class="title">${escapeHtml(q.title)}</div>
-          <div class="sub">${q.action === 'borrow' ? 'Borrow' : 'Return'} · ${escapeHtml(q.name)}</div>
-        </div>
-        <button class="btn btn-ghost btn-sm" data-idx="${i}">Remove</button>
-      </div>`).join('');
+  const total = scanQueue.length + unassignedBorrows.length;
+  if(!total){ el.innerHTML=''; return; }
+  const assignedRows = scanQueue.map((q,i) => `
+    <div class="book-row">
+      <div class="meta">
+        <div class="title">${escapeHtml(q.title)}</div>
+        <div class="sub">${q.action === 'borrow' ? 'Borrow' : 'Return'} · ${escapeHtml(q.name)}</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" data-idx="${i}">Remove</button>
+    </div>`).join('');
+  // Borrows a parent has scanned this round but hasn't assigned to a
+  // child/self yet — see renderGroupAssignPrompt_.
+  const unassignedRows = unassignedBorrows.map((u,i) => `
+    <div class="book-row">
+      <div class="meta">
+        <div class="title">${escapeHtml(u.title)}</div>
+        <div class="sub">Borrow · who's borrowing? (asked once you tap Done)</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" data-uidx="${i}">Remove</button>
+    </div>`).join('');
+  el.innerHTML = '<p class="section-sub" style="margin:10px 0 6px;">'+total+' item'+(total===1?'':'s')+' scanned</p>' + assignedRows + unassignedRows;
   el.querySelectorAll('button[data-idx]').forEach(btn=>{
     btn.onclick = () => { scanQueue.splice(Number(btn.dataset.idx), 1); renderScanQueue(); };
+  });
+  el.querySelectorAll('button[data-uidx]').forEach(btn=>{
+    btn.onclick = () => { unassignedBorrows.splice(Number(btn.dataset.uidx), 1); renderScanQueue(); };
   });
 }
 
@@ -750,7 +798,7 @@ function renderQueueConfirmation(){
   const listEl = document.getElementById('confirmList');
   listEl.innerHTML = scanQueue.map(q => `<div class="detail-row"><span>${q.action==='borrow'?'Borrow':'Return'}</span><span>${escapeHtml(q.title)}</span></div>`).join('');
   document.getElementById('confirmQueueBtn').onclick = commitScanQueue;
-  document.getElementById('cancelQueueBtn').onclick = () => { scanQueue = []; renderScanQueue(); document.getElementById('resultArea').innerHTML=''; };
+  document.getElementById('cancelQueueBtn').onclick = () => { scanQueue = []; unassignedBorrows = []; renderScanQueue(); document.getElementById('resultArea').innerHTML=''; };
 }
 
 async function commitScanQueue(){
