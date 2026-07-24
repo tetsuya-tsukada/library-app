@@ -45,14 +45,17 @@
  *    leave Status blank — the app treats blank Status as Available.
  * 13. Run `setupConfigSheet` once. This creates a Config tab (Key/Value
  *    columns) pre-filled with a LoanDays row (default 14), a
- *    MaxBorrowItems row (default 4), and an AdminSecret row (default
+ *    MaxBorrowItems row (default 4), an AdminSecret row (default
  *    "changeme" — change this immediately, it's the shared admin
- *    passcode). Edit any of these any time — the app reads this tab on
- *    every load, so there's no code change or redeploy needed to
- *    update them. Changing LoanDays changes the default due date for
- *    future approvals only, not books already borrowed. Changing
- *    MaxBorrowItems changes how many books someone can have Borrowed
- *    or Pending at once before new borrow requests are rejected.
+ *    passcode), a SiteAccessCode row (default "changeme-site-code" —
+ *    change this immediately too, see "HOW SITE ACCESS WORKS" below),
+ *    and a SiteAccessTTLHours row (default 24). Edit any of these any
+ *    time — the app reads this tab on every load, so there's no code
+ *    change or redeploy needed to update them. Changing LoanDays
+ *    changes the default due date for future approvals only, not books
+ *    already borrowed. Changing MaxBorrowItems changes how many books
+ *    someone can have Borrowed or Pending at once before new borrow
+ *    requests are rejected.
  * 14. Reload the Google Sheet tab in your browser. A "📚 Library" menu
  *    appears next to Help — use its "Print QR labels" item any time to
  *    generate a printable label sheet (title, item ID, and a scannable
@@ -64,6 +67,41 @@
  *    to print labels for just those books — handy when you've added a
  *    few new ones and don't want to reprint the whole catalog. With
  *    nothing meaningfully selected, it prints every book.
+ * 15. Once you've changed SiteAccessCode to something real, use the same
+ *    "📚 Library" menu's "Print site access QR code" item, print it, and
+ *    post it only somewhere that already requires physical presence to
+ *    reach — e.g. inside the library room itself. See "HOW SITE ACCESS
+ *    WORKS" below for what this actually protects against.
+ *
+ * HOW SITE ACCESS WORKS (a device-level gate in front of everything
+ * else, including sign-in and admin login):
+ * - The web app itself is public — anyone with the URL can load the
+ *   page — but every single backend action requires a site access code
+ *   that's only ever printed as a QR code from this Sheet (the "Print
+ *   site access QR code" menu item above), never shown anywhere in the
+ *   web app itself. Post that printout only somewhere physical access
+ *   is already required, like inside the library room, and a device
+ *   genuinely can't do anything useful with the app — not even reach
+ *   the sign-in screen — until someone has scanned it there.
+ * - Scanning it unlocks that one device for SiteAccessTTLHours (Config
+ *   tab, default 24) — after that, the app asks for another scan. This
+ *   expiry is enforced entirely on that device (a timestamp in its own
+ *   browser storage); the code itself never expires or rotates on its
+ *   own. Changing SiteAccessCode in the Config tab is the only way to
+ *   invalidate every device at once (e.g. if a printout goes missing).
+ * - This applies equally to admins — an admin who hasn't scanned the
+ *   code on their device can't reach the admin login screen either.
+ *   It's a separate layer entirely from admin login/AdminSecret, which
+ *   still exists on top of this for who gets admin screens once inside.
+ * - Same caveat as AdminSecret: this is a shared secret compared as
+ *   plain text, not a cryptographic token — someone who captures the
+ *   code value itself (photographs the QR, is told the code, etc.)
+ *   could keep using the API from anywhere without ever visiting the
+ *   library room again, until the code is rotated. The real protection
+ *   is that the code is never printed or displayed anywhere except that
+ *   one Sheet-generated QR code, so getting it in the first place
+ *   requires either physical access to wherever it's posted or edit
+ *   access to this Sheet.
  *
  * HOW SIGN-IN WORKS (no Google/Facebook login, no password — everyone
  * matches against the User List tab):
@@ -145,6 +183,7 @@ const CONFIG_SHEET = 'Config';
 const USERS_SHEET = 'User List';
 const LOAN_DAYS = 14;
 const MAX_BORROW_ITEMS = 4;
+const SITE_ACCESS_TTL_HOURS = 24;
 const APPROVAL_DECISION_COL = 7; // Approvals sheet: column G
 const BORROW_COUNT_COL = 9; // Books sheet: column I
 
@@ -275,7 +314,9 @@ function setupConfigSheet() {
   const defaults = {
     LoanDays: String(LOAN_DAYS),
     MaxBorrowItems: String(MAX_BORROW_ITEMS),
-    AdminSecret: 'changeme'
+    AdminSecret: 'changeme',
+    SiteAccessCode: 'changeme-site-code',
+    SiteAccessTTLHours: String(SITE_ACCESS_TTL_HOURS)
   };
   Object.keys(defaults).forEach(key => {
     if (!existingKeys[key]) sh.appendRow([key, defaults[key]]);
@@ -304,6 +345,52 @@ function getMaxBorrowItems_() {
   const cfg = getConfig();
   const max = parseInt(cfg.MaxBorrowItems, 10);
   return (!isNaN(max) && max > 0) ? max : MAX_BORROW_ITEMS;
+}
+
+// The whole-site access code — see "HOW SITE ACCESS WORKS" above. Never
+// hand this back through getPublicConfig()/action=getConfig; it's only
+// ever compared against, never read out, by anything reachable without
+// already having a valid code (see isValidSiteCode_/verifySiteCode).
+function getSiteAccessCode_() {
+  const cfg = getConfig();
+  return String(cfg.SiteAccessCode || '').trim();
+}
+
+// Same fallback treatment as getLoanDays_(), for how long a device stays
+// unlocked after scanning before it needs to scan again.
+function getSiteAccessTTLHours_() {
+  const cfg = getConfig();
+  const hours = parseInt(cfg.SiteAccessTTLHours, 10);
+  return (!isNaN(hours) && hours > 0) ? hours : SITE_ACCESS_TTL_HOURS;
+}
+
+// Fails closed: if SiteAccessCode hasn't been set up yet, nothing gets
+// in — same as adminLogin when AdminSecret is blank — rather than
+// silently leaving the whole app open just because setup isn't finished.
+function isValidSiteCode_(code) {
+  const expected = getSiteAccessCode_();
+  return !!expected && !!code && String(code).trim() === expected;
+}
+
+// Entry point for the site-wide access gate (index.html's
+// toggleGateScanner/onGateScanSuccess) — deliberately the only doGet
+// action that doesn't itself require an already-valid siteCode (see
+// doGet below), otherwise nobody could ever get in in the first place.
+// The code itself never expires or rotates on its own; only a device's
+// local copy of it does, after ttlHours — see index.html's
+// saveSiteAccess_/loadSiteAccess_.
+function verifySiteCode(code) {
+  if (!isValidSiteCode_(code)) return { error: 'Invalid security code' };
+  return { ok: true, ttlHours: getSiteAccessTTLHours_() };
+}
+
+// getConfig() below returns everything in the Config tab verbatim,
+// including AdminSecret and SiteAccessCode — fine for internal callers,
+// but action=getConfig is public and unauthenticated, so it must only
+// ever hand back this filtered subset instead.
+function getPublicConfig() {
+  const cfg = getConfig();
+  return { LoanDays: cfg.LoanDays, MaxBorrowItems: cfg.MaxBorrowItems };
 }
 
 function getConfig() {
@@ -339,6 +426,7 @@ function onOpen(e) {
   SpreadsheetApp.getUi()
     .createMenu('📚 Library')
     .addItem('Print QR labels', 'openPrintLabelsDialog')
+    .addItem('Print site access QR code', 'openSiteAccessQrDialog')
     .addToUi();
 }
 
@@ -436,55 +524,110 @@ const PRINT_LABELS_HTML = `<!DOCTYPE html>
   </script>
 </body></html>`;
 
+// Generates a QR code encoding the Config tab's SiteAccessCode, meant to
+// be printed and posted only somewhere that already requires physical
+// presence to reach (e.g. inside the library room itself) — see "HOW
+// SITE ACCESS WORKS" above. Deliberately only reachable from here, not
+// from the web app, so producing a fresh printout always requires
+// someone with edit access to this Sheet.
+function openSiteAccessQrDialog() {
+  const code = getSiteAccessCode_();
+  if (!code) {
+    SpreadsheetApp.getUi().alert('Set a SiteAccessCode value in the Config tab first (run setupConfigSheet if the row is missing), then try again.');
+    return;
+  }
+  const ttlHours = getSiteAccessTTLHours_();
+  const template = HtmlService.createTemplate(SITE_ACCESS_QR_HTML);
+  template.codeJson = JSON.stringify(code).replace(/</g, '\\u003c');
+  template.ttlHours = ttlHours;
+  const html = template.evaluate().setWidth(420).setHeight(480);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Site access QR code');
+}
+
+const SITE_ACCESS_QR_HTML = `<!DOCTYPE html>
+<html><head>
+<base target="_top">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  body{font-family:sans-serif;margin:0;padding:20px;text-align:center;}
+  .toolbar{margin-bottom:14px;}
+  #qr{display:flex;justify-content:center;margin:16px 0;}
+  .note{font-size:12px;color:#666;margin-top:10px;line-height:1.4;text-align:left;}
+  @media print { .toolbar{ display:none; } }
+</style>
+</head>
+<body>
+  <div class="toolbar"><button onclick="window.print()">Print</button></div>
+  <h3>Scan to unlock Stacks</h3>
+  <div id="qr"></div>
+  <p class="note">Post this only where patrons already have physical access (e.g. inside the library room) — anyone who scans it can use the app from their device for <?!= ttlHours ?> hour(s), then needs to scan again. Changing SiteAccessCode in the Config tab makes any old printouts stop working immediately.</p>
+  <script>
+    window.addEventListener('load', () => {
+      new QRCode(document.getElementById('qr'), { text: <?!= codeJson ?>, width: 220, height: 220 });
+    });
+  </script>
+</body></html>`;
+
 function doGet(e) {
   const action = e.parameter.action;
   let result;
   try {
-    switch (action) {
-      case 'lookup':
-        result = lookupBook(e.parameter.itemId);
-        break;
-      case 'scan':
-        result = scanBook(e.parameter.itemId, e.parameter.name, e.parameter.contact, e.parameter.adminEmail);
-        break;
-      case 'list':
-        result = listBooks();
-        break;
-      case 'addBook':
-        result = addBook(e.parameter.itemId, e.parameter.title, e.parameter.author);
-        break;
-      case 'myLoans':
-        result = myLoans(e.parameter.names);
-        break;
-      case 'getSummary':
-        result = getSummary(e.parameter.adminEmail);
-        break;
-      case 'checkApproval':
-        result = checkApproval(e.parameter.requestId);
-        break;
-      case 'getConfig':
-        result = getConfig();
-        break;
-      case 'searchUsers':
-        result = searchUsers(e.parameter.query);
-        break;
-      case 'adminLogin':
-        result = adminLogin(e.parameter.email, e.parameter.secret);
-        break;
-      case 'verifyAdmin':
-        result = verifyAdmin(e.parameter.email);
-        break;
-      case 'listApprovals':
-        result = listPendingApprovals(e.parameter.adminEmail);
-        break;
-      case 'approveRequest':
-        result = approveRequest(e.parameter.requestId, e.parameter.decision || 'Approve', e.parameter.adminEmail, e.parameter.dueDate);
-        break;
-      case 'approveAll':
-        result = approveAllPending(e.parameter.adminEmail);
-        break;
-      default:
-        result = { error: 'Unknown action' };
+    // Every action except verifySiteCode itself requires a valid,
+    // currently-configured site access code — see "HOW SITE ACCESS
+    // WORKS" above. This runs before the switch below on purpose, so
+    // adding a new case here can never accidentally skip the gate.
+    if (action !== 'verifySiteCode' && !isValidSiteCode_(e.parameter.siteCode)) {
+      result = { error: 'Security code required — scan the QR code posted in the library room.' };
+    } else {
+      switch (action) {
+        case 'lookup':
+          result = lookupBook(e.parameter.itemId);
+          break;
+        case 'scan':
+          result = scanBook(e.parameter.itemId, e.parameter.name, e.parameter.contact, e.parameter.adminEmail);
+          break;
+        case 'list':
+          result = listBooks();
+          break;
+        case 'addBook':
+          result = addBook(e.parameter.itemId, e.parameter.title, e.parameter.author);
+          break;
+        case 'myLoans':
+          result = myLoans(e.parameter.names);
+          break;
+        case 'getSummary':
+          result = getSummary(e.parameter.adminEmail);
+          break;
+        case 'checkApproval':
+          result = checkApproval(e.parameter.requestId);
+          break;
+        case 'getConfig':
+          result = getPublicConfig();
+          break;
+        case 'searchUsers':
+          result = searchUsers(e.parameter.query);
+          break;
+        case 'adminLogin':
+          result = adminLogin(e.parameter.email, e.parameter.secret);
+          break;
+        case 'verifyAdmin':
+          result = verifyAdmin(e.parameter.email);
+          break;
+        case 'listApprovals':
+          result = listPendingApprovals(e.parameter.adminEmail);
+          break;
+        case 'approveRequest':
+          result = approveRequest(e.parameter.requestId, e.parameter.decision || 'Approve', e.parameter.adminEmail, e.parameter.dueDate);
+          break;
+        case 'approveAll':
+          result = approveAllPending(e.parameter.adminEmail);
+          break;
+        case 'verifySiteCode':
+          result = verifySiteCode(e.parameter.code);
+          break;
+        default:
+          result = { error: 'Unknown action' };
+      }
     }
   } catch (err) {
     result = { error: err.message };

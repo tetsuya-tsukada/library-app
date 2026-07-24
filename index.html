@@ -157,10 +157,43 @@
   p.section-sub{opacity:0.6;font-size:13px;margin:0 0 18px;}
   .divider{height:1px;background:var(--line);margin:22px 0;}
   a.linklike{color:var(--gold);text-decoration:none;}
+
+  /* Site access gate — covers everything else until this device has a
+     valid, unexpired security code (see checkSiteAccess_ / toggleGateScanner) */
+  .site-gate{
+    position:fixed;inset:0;z-index:1000;background:var(--ink);
+    display:flex;align-items:center;justify-content:center;padding:24px;
+  }
+  .site-gate-card{max-width:380px;width:100%;text-align:center;}
+  .site-gate-card .brand{
+    font-family:'Zilla Slab',serif;font-weight:700;font-size:22px;margin-bottom:28px;
+  }
+  .site-gate-card .brand small{
+    display:block;font-family:'JetBrains Mono',monospace;font-weight:400;
+    font-size:10px;letter-spacing:1.5px;color:var(--gold);text-transform:uppercase;margin-top:2px;
+  }
+  #gateReaderWrap{border-radius:8px;overflow:hidden;border:1px solid var(--line);margin:16px 0;}
+  #gateReader video{border-radius:8px;}
 </style>
 </head>
 <body>
-<div class="app">
+<!-- SITE ACCESS GATE — shown instead of the app for any device that hasn't
+     scanned the security code (or whose scan has expired). See
+     checkSiteAccess_/toggleGateScanner in the script below. -->
+<div class="site-gate" id="siteGate" style="display:none;">
+  <div class="site-gate-card">
+    <div class="brand">Stacks<small>Community Library</small></div>
+    <h3 class="section-title">Security code required</h3>
+    <p class="section-sub">Scan the security code posted in the library room to unlock this device.</p>
+    <div id="gateReaderWrap" style="display:none;">
+      <div id="gateReader"></div>
+    </div>
+    <button class="btn btn-primary" id="gateScanBtn" onclick="toggleGateScanner()">Scan security code</button>
+    <p class="section-sub" id="gateStatus" style="margin-top:14px;color:#e8998a;"></p>
+  </div>
+</div>
+
+<div class="app" id="mainApp" style="display:none;">
 
   <header class="top">
     <div class="brand">Stacks<small>Community Library</small></div>
@@ -302,6 +335,47 @@ let CONFIG = JSON.parse(localStorage.getItem('stacks_config') || '{}');
 if(!CONFIG.apiUrl){ CONFIG.apiUrl = DEFAULT_API_URL; }
 let USER = JSON.parse(localStorage.getItem('stacks_user') || 'null');
 let ACTING_AS = null; // admin temporarily scanning on behalf of a chosen User List row
+
+// Site access: the whole app (every backend action except verifySiteCode
+// itself) is locked behind a code that's only ever handed out as a QR
+// code printed from the Google Sheet — see openSiteAccessQrDialog in
+// Code.gs. A device that scans it stays unlocked for SiteAccessTTLHours,
+// then has to scan again; the code itself never expires or rotates on
+// its own (see getSiteAccessCode_/isValidSiteCode_ in Code.gs) — this is
+// the same "shared secret, not a strong boundary" tradeoff already used
+// for the admin passcode, just applied to the whole site.
+const SITE_ACCESS_KEY = 'stacks_site_access';
+let SITE_ACCESS = null; // { code, expiresAt } once this device is unlocked
+let gateHtml5QrCode = null;
+let gateScanning = false;
+
+function loadSiteAccess_(){
+  try{
+    const parsed = JSON.parse(localStorage.getItem(SITE_ACCESS_KEY) || 'null');
+    if(!parsed || !parsed.code || !parsed.expiresAt) return null;
+    if(Date.now() >= parsed.expiresAt) return null; // expired on this device — needs a fresh scan
+    return parsed;
+  }catch(e){ return null; }
+}
+
+function saveSiteAccess_(code, ttlHours){
+  SITE_ACCESS = { code, expiresAt: Date.now() + ttlHours * 60 * 60 * 1000 };
+  localStorage.setItem(SITE_ACCESS_KEY, JSON.stringify(SITE_ACCESS));
+}
+
+// Every backend call goes through this so the unlocked device's code is
+// never forgotten on some call site — action=verifySiteCode is the one
+// exception (it's how a device gets a code validated in the first place).
+function apiUrl_(action, params){
+  let url = CONFIG.apiUrl + '?action=' + encodeURIComponent(action);
+  if(SITE_ACCESS && SITE_ACCESS.code) url += '&siteCode=' + encodeURIComponent(SITE_ACCESS.code);
+  if(params){
+    Object.keys(params).forEach(k => {
+      if(params[k] !== undefined && params[k] !== null) url += '&' + k + '=' + encodeURIComponent(params[k]);
+    });
+  }
+  return url;
+}
 let html5QrCode = null;
 let scanning = false;
 let bookCache = [];
@@ -310,6 +384,58 @@ let unassignedBorrows = []; // { itemId, title } — borrows scanned by a parent
 let pendingScans = []; // itemIds waiting to be looked up (fed from onScanSuccess faster than we can process)
 let processingItemId = null; // itemId currently mid-lookup, so repeat frames of it are ignored
 let scanProcessing = false; // true while the pendingScans drain loop is running
+
+async function toggleGateScanner(){
+  const readerWrap = document.getElementById('gateReaderWrap');
+  const btn = document.getElementById('gateScanBtn');
+  const statusEl = document.getElementById('gateStatus');
+  if(gateScanning){
+    await gateHtml5QrCode.stop();
+    readerWrap.style.display = 'none';
+    btn.textContent = 'Scan security code';
+    gateScanning = false;
+    return;
+  }
+  statusEl.textContent = '';
+  readerWrap.style.display = 'block';
+  btn.textContent = 'Stop scanning';
+  gateScanning = true;
+  gateHtml5QrCode = new Html5Qrcode('gateReader');
+  gateHtml5QrCode.start(
+    { facingMode: 'environment' },
+    { fps: 10, qrbox: 220 },
+    onGateScanSuccess,
+    ()=>{}
+  ).catch(err=>{
+    statusEl.textContent = 'Camera access failed: ' + err;
+    gateScanning = false; btn.textContent = 'Scan security code'; readerWrap.style.display = 'none';
+  });
+}
+
+async function onGateScanSuccess(decodedText){
+  const statusEl = document.getElementById('gateStatus');
+  const code = decodedText.trim();
+  await gateHtml5QrCode.stop();
+  document.getElementById('gateReaderWrap').style.display = 'none';
+  document.getElementById('gateScanBtn').textContent = 'Scan security code';
+  gateScanning = false;
+  statusEl.textContent = 'Checking…';
+  try{
+    const res = await fetch(apiUrl_('verifySiteCode', { code }));
+    const data = await res.json();
+    if(data.error || !data.ok){
+      statusEl.textContent = data.error || 'Invalid security code — try scanning again.';
+      return;
+    }
+    saveSiteAccess_(code, data.ttlHours || 24);
+    statusEl.textContent = '';
+    document.getElementById('siteGate').style.display = 'none';
+    document.getElementById('mainApp').style.display = '';
+    init();
+  }catch(e){
+    statusEl.textContent = 'Could not reach the sheet. Check your connection and try again.';
+  }
+}
 
 function showScreen(name){
   if((name==='shelf' || name==='approvals' || name==='users' || name==='summary') && !(USER && USER.isAdmin)) name = 'scan';
@@ -407,7 +533,7 @@ async function refreshUserMatch(){
   if(!USER) return;
   if(USER.matchType === 'admin'){
     try{
-      const res = await fetch(CONFIG.apiUrl + '?action=verifyAdmin&email=' + encodeURIComponent(USER.contact));
+      const res = await fetch(apiUrl_('verifyAdmin', { email: USER.contact }));
       const data = await res.json();
       USER.isAdmin = !!data.isAdmin;
       localStorage.setItem('stacks_user', JSON.stringify(USER));
@@ -417,7 +543,7 @@ async function refreshUserMatch(){
   }
   if(!USER.loginQuery){ applyAdminUI(false); return; }
   try{
-    const res = await fetch(CONFIG.apiUrl + '?action=searchUsers&query=' + encodeURIComponent(USER.loginQuery));
+    const res = await fetch(apiUrl_('searchUsers', { query: USER.loginQuery }));
     const data = await res.json();
     const match = (data.candidates || []).find(c => c.type === USER.matchType && c.name === USER.name);
     if(match){
@@ -435,7 +561,7 @@ const onLoginSearchInput = debounce_(async function(){
   statusEl.textContent = '';
   if(query.length < 2){ holder.innerHTML = ''; return; }
   try{
-    const res = await fetch(CONFIG.apiUrl + '?action=searchUsers&query=' + encodeURIComponent(query));
+    const res = await fetch(apiUrl_('searchUsers', { query }));
     const data = await res.json();
     renderLoginCandidates(data.candidates || [], query);
   }catch(e){
@@ -469,7 +595,7 @@ async function adminLogin(){
   errEl.textContent = '';
   if(!email || !secret){ errEl.textContent = 'Enter both the admin email and passcode.'; return; }
   try{
-    const url = CONFIG.apiUrl + '?action=adminLogin&email=' + encodeURIComponent(email) + '&secret=' + encodeURIComponent(secret);
+    const url = apiUrl_('adminLogin', { email, secret });
     const res = await fetch(url);
     const data = await res.json();
     if(data.error){ errEl.textContent = data.error; return; }
@@ -492,7 +618,7 @@ function applyAdminUI(isAdmin){
 
 async function loadRemoteConfig(){
   try{
-    const res = await fetch(CONFIG.apiUrl + '?action=getConfig');
+    const res = await fetch(apiUrl_('getConfig'));
     const data = await res.json();
     CONFIG.loanDays = parseInt(data.LoanDays, 10) || 14;
   }catch(e){
@@ -646,7 +772,7 @@ async function processPendingScans_(){
 
 async function lookupAndQueueScan_(itemId){
   try{
-    const res = await fetch(CONFIG.apiUrl + '?action=lookup&itemId=' + encodeURIComponent(itemId));
+    const res = await fetch(apiUrl_('lookup', { itemId }));
     const data = await res.json();
     if(data.error){ flashScanNote_(data.error+' ('+itemId+')'); return; }
     const status = data.status || 'Available';
@@ -817,9 +943,7 @@ async function commitScanQueue(){
   for(const q of queue){
     area.innerHTML = '<p style="opacity:0.6;font-family:JetBrains Mono,monospace;font-size:12px;">Processing '+escapeHtml(q.title)+'…</p>';
     try{
-      const url = CONFIG.apiUrl + '?action=scan&itemId=' + encodeURIComponent(q.itemId)
-        + '&name=' + encodeURIComponent(q.name) + '&contact=' + encodeURIComponent(q.contact || '')
-        + (adminEmail ? '&adminEmail=' + encodeURIComponent(adminEmail) : '');
+      const url = apiUrl_('scan', { itemId: q.itemId, name: q.name, contact: q.contact || '', adminEmail: adminEmail || undefined });
       const res = await fetch(url);
       const data = await res.json();
       results.push({ q, data });
@@ -862,7 +986,7 @@ async function refreshMyBooks(){
   const names = myBooksNames_();
   if(!names.length){ el.innerHTML = ''; return; }
   try{
-    const res = await fetch(CONFIG.apiUrl + '?action=myLoans&names=' + encodeURIComponent(names.join(',')));
+    const res = await fetch(apiUrl_('myLoans', { names: names.join(',') }));
     const data = await res.json();
     const loans = data.loans || [];
     if(!loans.length){ el.innerHTML = '<p class="section-sub" style="text-align:center;">No books currently borrowed.</p>'; return; }
@@ -882,7 +1006,7 @@ async function loadShelf(){
   const countEl = document.getElementById('shelfCount');
   countEl.textContent = 'Loading…';
   try{
-    const res = await fetch(CONFIG.apiUrl + '?action=list');
+    const res = await fetch(apiUrl_('list'));
     const data = await res.json();
     bookCache = data.books || [];
     const borrowed = bookCache.filter(b=>b.Status==='Borrowed').length;
@@ -922,7 +1046,7 @@ async function loadApprovals(){
   const countEl = document.getElementById('approvalsCount');
   countEl.textContent = 'Loading…';
   try{
-    const res = await fetch(CONFIG.apiUrl + '?action=listApprovals&adminEmail=' + encodeURIComponent(USER.contact||''));
+    const res = await fetch(apiUrl_('listApprovals', { adminEmail: USER.contact || '' }));
     const data = await res.json();
     if(data.error){
       countEl.textContent = data.error;
@@ -967,9 +1091,7 @@ async function approveOne(requestId){
   try{
     const dueInput = document.getElementById('due-'+requestId);
     const dueDate = dueInput ? dueInput.value : '';
-    const url = CONFIG.apiUrl + '?action=approveRequest&requestId=' + encodeURIComponent(requestId)
-      + '&decision=Approve&adminEmail=' + encodeURIComponent(USER.contact||'')
-      + (dueDate ? '&dueDate=' + encodeURIComponent(dueDate) : '');
+    const url = apiUrl_('approveRequest', { requestId, decision: 'Approve', adminEmail: USER.contact || '', dueDate: dueDate || undefined });
     const res = await fetch(url);
     const data = await res.json();
     if(data.error){ alert(data.error); return; }
@@ -981,7 +1103,7 @@ async function approveAllRequests(){
   if(!approvalsCache.length){ return; }
   if(!confirm('Approve all '+approvalsCache.length+' pending requests?')) return;
   try{
-    const url = CONFIG.apiUrl + '?action=approveAll&adminEmail=' + encodeURIComponent(USER.contact||'');
+    const url = apiUrl_('approveAll', { adminEmail: USER.contact || '' });
     const res = await fetch(url);
     const data = await res.json();
     if(data.error){ alert(data.error); return; }
@@ -996,7 +1118,7 @@ async function loadSummary(){
   tilesEl.innerHTML = '<p class="section-sub">Loading…</p>';
   document.getElementById('summaryDetail').innerHTML = '';
   try{
-    const res = await fetch(CONFIG.apiUrl + '?action=getSummary&adminEmail=' + encodeURIComponent(USER.contact||''));
+    const res = await fetch(apiUrl_('getSummary', { adminEmail: USER.contact || '' }));
     const data = await res.json();
     if(data.error){ tilesEl.innerHTML = '<p class="section-sub">'+escapeHtml(data.error)+'</p>'; return; }
     summaryCache = data;
@@ -1047,7 +1169,7 @@ const onUsersSearchInput = debounce_(async function(){
   }
   listEl.innerHTML = '<p style="opacity:0.6;font-size:13px;">Searching…</p>';
   try{
-    const res = await fetch(CONFIG.apiUrl + '?action=searchUsers&query=' + encodeURIComponent(query));
+    const res = await fetch(apiUrl_('searchUsers', { query }));
     const data = await res.json();
     renderUsersResults(data.candidates || []);
   }catch(e){
@@ -1099,8 +1221,7 @@ async function addBook(){
   if(!title){ alert('Enter a title.'); return; }
   const itemId = nextItemId();
   try{
-    const url = CONFIG.apiUrl + '?action=addBook&itemId='+encodeURIComponent(itemId)
-      + '&title='+encodeURIComponent(title) + '&author='+encodeURIComponent(author);
+    const url = apiUrl_('addBook', { itemId, title, author });
     const res = await fetch(url);
     const data = await res.json();
     if(data.error){ alert(data.error); return; }
@@ -1176,7 +1297,13 @@ function renderQr(elId, text){
   }, 50);
 }
 
-init();
+SITE_ACCESS = loadSiteAccess_();
+if(SITE_ACCESS){
+  document.getElementById('mainApp').style.display = '';
+  init();
+} else {
+  document.getElementById('siteGate').style.display = 'flex';
+}
 </script>
 </body>
 </html>
