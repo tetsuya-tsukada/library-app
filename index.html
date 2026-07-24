@@ -372,7 +372,24 @@ function completeSignIn_(user){
   localStorage.setItem('stacks_user', JSON.stringify(USER));
   updateWhoBadge();
   applyAdminUI(USER.isAdmin);
+  resetScanResult_();
   showScreen('scan');
+}
+
+// Clears whatever was left on screen from a previous scan/borrow/return so
+// switching who you're scanning as (or signing in/out) never leaves a
+// stale "Done" card sitting there looking like it belongs to the new
+// identity. Only touches the result/queue area, not the identity itself.
+function resetScanResult_(){
+  scanQueue = [];
+  pendingScans = [];
+  processingItemId = null;
+  scanProcessing = false;
+  renderScanQueue();
+  const area = document.getElementById('resultArea');
+  if(area) area.innerHTML = '';
+  const note = document.getElementById('scanNote');
+  if(note) note.textContent = '';
 }
 
 // Refreshes on every reload so state doesn't go stale without asking
@@ -493,6 +510,7 @@ function logout(){
   localStorage.removeItem('stacks_user');
   updateWhoBadge();
   applyAdminUI(false);
+  resetScanResult_();
   showScreen('identify');
 }
 
@@ -510,6 +528,7 @@ function updateScanIdentityBanner(){
 
 function clearActingAs(){
   ACTING_AS = null;
+  resetScanResult_();
   updateScanIdentityBanner();
 }
 
@@ -1009,6 +1028,7 @@ function renderUsersResults(candidates){
 
 function actAsUser(user){
   ACTING_AS = { name: user.name, contact: contactOf_(user) };
+  resetScanResult_();
   showScreen('scan');
 }
 
