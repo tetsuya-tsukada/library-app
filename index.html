@@ -549,11 +549,26 @@ async function stopScanningSession(){
   readerWrap.style.display='none';
   btn.textContent='Start scanning';
   scanning=false;
+  // The last scan or two may still be mid-lookup (or, for a parent
+  // session, waiting on a child-picker tap) when the camera stops —
+  // without this, the confirmation could be built and shown before those
+  // land in scanQueue, so it'd display (and let you confirm) fewer items
+  // than actually end up queued.
+  await waitForScansToSettle_();
   if(scanQueue.length){
     renderQueueConfirmation();
   } else {
     document.getElementById('resultArea').innerHTML = '';
   }
+}
+
+function waitForScansToSettle_(){
+  return new Promise(resolve => {
+    (function check(){
+      if(!scanProcessing && pendingScans.length === 0 && processingItemId === null) resolve();
+      else setTimeout(check, 100);
+    })();
+  });
 }
 
 // Scans are only queued here — nothing is written to the sheet until the
