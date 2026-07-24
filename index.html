@@ -346,11 +346,12 @@ function debounce_(fn, wait){
   };
 }
 
-function contactOf_(u){ return u.name || ''; }
+// The "contact" recorded against a borrow: for a child, that's their
+// Parent1 (an adult to actually reach), not the child's own name; for a
+// row with no Parent1 on file (e.g. staff/self), fall back to their own
+// name since there's no one else to list.
+function contactOf_(u){ return (u && u.parent1) || (u && u.name) || ''; }
 
-// A parent has no row of their own — their "contact" for record-keeping
-// borrows the email/phone off their first listed child's row, since
-// that's the same info duplicated across all of them by convention.
 // Patron sign-in never grants admin access — see adminLogin() for the
 // separate, deliberately-harder path admins use instead.
 function buildUserFromCandidate_(query, candidate){
@@ -361,10 +362,11 @@ function buildUserFromCandidate_(query, candidate){
       isAdmin: false
     };
   }
-  const firstChild = candidate.children && candidate.children[0];
+  // A parent borrowing for themself IS the contact — not derived from
+  // whichever child happens to be listed first.
   return {
     mode: 'roster', matchType: 'parent', loginQuery: query,
-    name: candidate.name, contact: firstChild ? contactOf_(firstChild) : '',
+    name: candidate.name, contact: candidate.name,
     children: candidate.children, isAdmin: false
   };
 }
@@ -696,7 +698,7 @@ function renderGroupAssignPrompt_(){
   selfBtn.textContent = 'Borrow for myself ('+USER.name+')';
   // Tagged "(Parent)" so this can never collide with a child of the same
   // name for the per-name borrow limit, and reads clearly in the Sheet.
-  selfBtn.onclick = () => assignUnassignedBorrows_(USER.name + ' (Parent)', USER.contact);
+  selfBtn.onclick = () => assignUnassignedBorrows_(USER.name + ' (Parent)', USER.name);
   holder.appendChild(selfBtn);
 }
 
