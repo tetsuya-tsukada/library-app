@@ -146,6 +146,7 @@ const USERS_SHEET = 'User List';
 const LOAN_DAYS = 14;
 const MAX_BORROW_ITEMS = 4;
 const APPROVAL_DECISION_COL = 7; // Approvals sheet: column G
+const BORROW_COUNT_COL = 9; // Books sheet: column I
 
 function getSS() {
   return SHEET_ID ? SpreadsheetApp.openById(SHEET_ID) : SpreadsheetApp.getActiveSpreadsheet();
@@ -156,8 +157,13 @@ function setupSheets() {
   let books = ss.getSheetByName(BOOKS_SHEET);
   if (!books) {
     books = ss.insertSheet(BOOKS_SHEET);
-    books.appendRow(['ItemID', 'Title', 'Author', 'Status', 'BorrowerName', 'BorrowerContact', 'BorrowDate', 'DueDate']);
+    books.appendRow(['ItemID', 'Title', 'Author', 'Status', 'BorrowerName', 'BorrowerContact', 'BorrowDate', 'DueDate', 'BorrowCount']);
     books.setFrozenRows(1);
+  } else if (String(books.getRange(1, BORROW_COUNT_COL).getValue()).trim() !== 'BorrowCount') {
+    // Existing tab from before BorrowCount existed — add the header
+    // without touching any existing rows or their data (existing rows'
+    // counts just start at blank/0 going forward).
+    books.getRange(1, BORROW_COUNT_COL).setValue('BorrowCount');
   }
 
   let tx = ss.getSheetByName(TX_SHEET);
@@ -544,6 +550,7 @@ function scanBook(itemId, name, contact, adminEmail) {
       const due = new Date(now.getTime() + getLoanDays_() * 24 * 60 * 60 * 1000);
       sh.getRange(rowNum, 4, 1, 5).setValues([['Borrowed', name, contact || '', now, due]]);
       logTx_(itemId, title, 'Borrow', name, contact);
+      incrementBorrowCount_(sh, rowNum);
       return { action: 'borrow', itemId, title, borrowerName: name, dueDate: due };
     }
     const requestId = itemId + '-' + now.getTime();
@@ -585,6 +592,16 @@ function countActiveLoans_(name) {
 function logTx_(itemId, title, action, name, contact) {
   const sh = getSS().getSheetByName(TX_SHEET);
   sh.appendRow([new Date(), itemId, title, action, name || '', contact || '']);
+}
+
+// Bumped once per completed borrow — an admin's immediate scan, or a
+// patron's request once approved — never on a return, so it tracks
+// lifetime times-borrowed rather than current status. Lets you sort the
+// Books tab by BorrowCount to see what's actually popular.
+function incrementBorrowCount_(sh, rowNum) {
+  const cell = sh.getRange(rowNum, BORROW_COUNT_COL);
+  const current = parseInt(cell.getValue(), 10);
+  cell.setValue((isNaN(current) ? 0 : current) + 1);
 }
 
 function getApprovalsSheet_() {
@@ -702,6 +719,7 @@ function applyApprovalDecision_(sh, row, decision, adminEmail, overrideDueDate) 
 
     booksSh.getRange(bRow + 1, 4, 1, 5).setValues([['Borrowed', requesterName, requesterContact || '', now, due]]);
     logTx_(itemId, title, 'Borrow', requesterName, requesterContact);
+    incrementBorrowCount_(booksSh, bRow + 1);
   } else if (decision === 'Deny' && bookIsPending) {
     booksSh.getRange(bRow + 1, 4, 1, 5).setValues([['Available', '', '', '', '']]);
     logTx_(itemId, title, 'Deny', requesterName, requesterContact);
@@ -905,7 +923,7 @@ function addBook(itemId, title, author) {
   if (!itemId || !title) return { error: 'itemId and title required' };
   const { sh, data } = getBooksSheet_();
   if (findRow_(data, itemId) !== -1) return { error: 'itemId already exists' };
-  sh.appendRow([itemId, title, author || '', 'Available', '', '', '', '']);
+  sh.appendRow([itemId, title, author || '', 'Available', '', '', '', '', 0]);
   return { ok: true, itemId, title };
 }
 
