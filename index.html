@@ -1014,22 +1014,36 @@ async function refreshMyBooks(){
   if(!names.length){ el.innerHTML = ''; return; }
   // Lets someone waiting on an admin's approval check again without
   // leaving the screen — a just-approved borrow won't show up here
-  // until the next fetch, and nothing polls automatically.
-  const refreshRow = '<div style="display:flex;justify-content:flex-end;margin-bottom:6px;"><button class="btn btn-ghost btn-sm" onclick="refreshMyBooks()">Refresh</button></div>';
+  // until the next fetch, and nothing polls automatically. Margin-top
+  // gives it breathing room below the scan button/camera above it,
+  // rather than sitting flush against them.
+  const refreshRow = '<div style="display:flex;justify-content:flex-end;margin:18px 0 6px;"><button class="btn btn-ghost btn-sm" onclick="refreshMyBooks()">Refresh</button></div>';
+  const bookRow = (b, pill) => `
+    <div class="book-row">
+      <div class="meta">
+        <div class="title">${escapeHtml(b.title)}${USER.matchType==='parent' ? ' <span style="opacity:0.5;font-weight:400;">('+escapeHtml(b.borrowerName)+')</span>' : ''}</div>
+      </div>
+      ${pill}
+    </div>`;
   try{
     const res = await fetch(apiUrl_('myLoans', { names: names.join(',') }));
     const data = await res.json();
     const loans = data.loans || [];
-    if(!loans.length){ el.innerHTML = refreshRow + '<p class="section-sub" style="text-align:center;">No books currently borrowed.</p>'; return; }
-    el.innerHTML = refreshRow + `
-      <p class="section-sub" style="text-align:center;font-weight:600;color:var(--paper);opacity:1;">${loans.length} book${loans.length===1?'':'s'} borrowed</p>
-      ` + loans.map(l => `
-        <div class="book-row">
-          <div class="meta">
-            <div class="title">${escapeHtml(l.title)}${USER.matchType==='parent' ? ' <span style="opacity:0.5;font-weight:400;">('+escapeHtml(l.borrowerName)+')</span>' : ''}</div>
-          </div>
-          <span class="status-pill avail">Due ${l.dueDate ? new Date(l.dueDate).toLocaleDateString() : '—'}</span>
-        </div>`).join('');
+    const pending = data.pending || [];
+    if(!loans.length && !pending.length){
+      el.innerHTML = refreshRow + '<p class="section-sub" style="text-align:center;">No books currently borrowed.</p>';
+      return;
+    }
+    let html = refreshRow;
+    if(pending.length){
+      html += `<p class="section-sub" style="text-align:center;font-weight:600;color:var(--gold);opacity:1;">${pending.length} awaiting approval</p>` +
+        pending.map(p => bookRow(p, '<span class="status-pill pending">Pending</span>')).join('');
+    }
+    if(loans.length){
+      html += `<p class="section-sub" style="text-align:center;font-weight:600;color:var(--paper);opacity:1;margin-top:${pending.length ? '18px' : '0'};">${loans.length} book${loans.length===1?'':'s'} borrowed</p>` +
+        loans.map(l => bookRow(l, '<span class="status-pill avail">Due '+(l.dueDate ? new Date(l.dueDate).toLocaleDateString() : '—')+'</span>')).join('');
+    }
+    el.innerHTML = html;
   }catch(e){ el.innerHTML = refreshRow; }
 }
 
