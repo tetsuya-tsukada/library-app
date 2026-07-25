@@ -78,9 +78,6 @@
   .btn-sm{width:auto;padding:8px 14px;font-size:13px;}
 
   /* Scan screen */
-  .scan-hero{text-align:center;padding:30px 0 20px;}
-  .scan-hero h1{font-family:'Zilla Slab',serif;font-size:28px;margin:0 0 6px;}
-  .scan-hero p{opacity:0.65;font-size:14px;margin:0;}
   #readerWrap{position:relative;margin:16px 0;}
   #reader{border-radius:8px;overflow:hidden;border:1px solid var(--line);}
   #reader video{border-radius:8px;}
@@ -244,10 +241,6 @@
 
     <!-- SCAN -->
     <section class="screen" id="screen-scan">
-      <div class="scan-hero">
-        <h1>Scan a book</h1>
-        <p>Scan as many books as you like, then confirm all at once. Scan an already-borrowed book to return it.</p>
-      </div>
       <p class="section-sub" id="scanIdentityBanner" style="text-align:center;"></p>
       <div id="myBooksSummary"></div>
       <button class="btn btn-primary" id="scanBtn" onclick="toggleScanner()">Start scanning</button>
@@ -800,6 +793,12 @@ async function lookupAndQueueScan_(itemId){
         // stops (see renderGroupAssignPrompt_).
         unassignedBorrows.push({ itemId, title: data.title });
         renderScanQueue();
+      } else if(USER.matchType === 'admin'){
+        // Only people on the User List can borrow — an admin isn't one,
+        // so borrowing under their own admin identity isn't allowed.
+        // They must look the patron up first (Users tab → "Use for
+        // scan"), which sets ACTING_AS and is handled above.
+        flashScanNote_('Find the patron first — Users tab → "Use for scan". Admins can\'t borrow under their own name.');
       } else {
         addToQueue_(itemId, data.title, 'borrow', USER.name, USER.contact);
       }
@@ -999,12 +998,16 @@ async function refreshMyBooks(){
   if(!USER || USER.matchType === 'admin'){ el.innerHTML = ''; return; }
   const names = myBooksNames_();
   if(!names.length){ el.innerHTML = ''; return; }
+  // Lets someone waiting on an admin's approval check again without
+  // leaving the screen — a just-approved borrow won't show up here
+  // until the next fetch, and nothing polls automatically.
+  const refreshRow = '<div style="display:flex;justify-content:flex-end;margin-bottom:6px;"><button class="btn btn-ghost btn-sm" onclick="refreshMyBooks()">Refresh</button></div>';
   try{
     const res = await fetch(apiUrl_('myLoans', { names: names.join(',') }));
     const data = await res.json();
     const loans = data.loans || [];
-    if(!loans.length){ el.innerHTML = '<p class="section-sub" style="text-align:center;">No books currently borrowed.</p>'; return; }
-    el.innerHTML = `
+    if(!loans.length){ el.innerHTML = refreshRow + '<p class="section-sub" style="text-align:center;">No books currently borrowed.</p>'; return; }
+    el.innerHTML = refreshRow + `
       <p class="section-sub" style="text-align:center;font-weight:600;color:var(--paper);opacity:1;">${loans.length} book${loans.length===1?'':'s'} borrowed</p>
       ` + loans.map(l => `
         <div class="book-row">
@@ -1013,7 +1016,7 @@ async function refreshMyBooks(){
           </div>
           <span class="status-pill avail">Due ${l.dueDate ? new Date(l.dueDate).toLocaleDateString() : '—'}</span>
         </div>`).join('');
-  }catch(e){ el.innerHTML = ''; }
+  }catch(e){ el.innerHTML = refreshRow; }
 }
 
 async function loadShelf(){
