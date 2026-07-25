@@ -207,6 +207,13 @@
 
   <main>
 
+    <!-- Shown until the first showScreen() call — covers the gap while
+         init() awaits its network calls (config, session refresh) before
+         any screen is ready to display, so the page never looks blank. -->
+    <div id="appLoading" style="text-align:center;padding:60px 20px;">
+      <p class="section-sub" style="margin:0;">Loading…</p>
+    </div>
+
     <!-- IDENTIFY (login landing page) -->
     <section class="screen" id="screen-identify">
       <h3 class="section-title">Sign in</h3>
@@ -454,6 +461,8 @@ async function onGateScanSuccess(decodedText){
 function showScreen(name){
   if((name==='shelf' || name==='approvals' || name==='users' || name==='summary') && !(USER && USER.isAdmin)) name = 'scan';
   if(name==='scan' && !USER) name = 'identify';
+  const loadingEl = document.getElementById('appLoading');
+  if(loadingEl) loadingEl.style.display = 'none';
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('nav.topnav button').forEach(b=>b.classList.remove('active'));
   const el = document.getElementById('screen-'+name);
@@ -1025,6 +1034,9 @@ async function refreshMyBooks(){
       </div>
       ${pill}
     </div>`;
+  // So the gap between the screen appearing and this fetch resolving
+  // doesn't just look empty/broken while it's in flight.
+  el.innerHTML = refreshRow + '<p class="section-sub" style="text-align:center;">Loading…</p>';
   try{
     const res = await fetch(apiUrl_('myLoans', { names: names.join(',') }));
     const data = await res.json();
