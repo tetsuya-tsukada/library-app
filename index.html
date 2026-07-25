@@ -242,12 +242,19 @@
     <!-- SCAN -->
     <section class="screen" id="screen-scan">
       <p class="section-sub" id="scanIdentityBanner" style="text-align:center;"></p>
-      <div id="myBooksSummary"></div>
+      <div id="adminPatronPicker" style="display:none;">
+        <div class="field">
+          <label>Find patron</label>
+          <input type="text" id="scanPatronSearch" placeholder="Search by name…" oninput="onScanPatronSearchInput()">
+        </div>
+        <div id="scanPatronResults"></div>
+      </div>
       <button class="btn btn-primary" id="scanBtn" onclick="toggleScanner()">Start scanning</button>
       <div id="readerWrap" style="display:none;">
         <div id="reader"></div>
         <div class="scan-toast" id="scanToast"></div>
       </div>
+      <div id="myBooksSummary"></div>
       <p class="section-sub" id="scanNote" style="text-align:center;color:var(--gold);"></p>
       <div id="scanQueueList"></div>
       <div id="resultArea"></div>
@@ -654,14 +661,21 @@ function logout(){
 
 function updateScanIdentityBanner(){
   const el = document.getElementById('scanIdentityBanner');
-  if(!el) return;
-  if(ACTING_AS){
-    el.innerHTML = 'Scanning as <strong>'+escapeHtml(ACTING_AS.name)+'</strong> · <a class="linklike" style="cursor:pointer;" onclick="clearActingAs()">Stop</a>';
-  } else if(USER && USER.matchType === 'parent'){
-    el.textContent = 'Signed in as '+USER.name+' — pick a child (or yourself) when borrowing.';
-  } else {
-    el.textContent = '';
+  if(el){
+    if(ACTING_AS){
+      el.innerHTML = 'Scanning as <strong>'+escapeHtml(ACTING_AS.name)+'</strong> · <a class="linklike" style="cursor:pointer;" onclick="clearActingAs()">Stop</a>';
+    } else if(USER && USER.matchType === 'parent'){
+      el.textContent = 'Signed in as '+USER.name+' — pick a child (or yourself) when borrowing.';
+    } else {
+      el.textContent = '';
+    }
   }
+  // Admins can't borrow under their own name (see lookupAndQueueScan_),
+  // so the patron picker stays visible on the Scan screen the whole
+  // time — not just until one's picked — making it easy to swap to a
+  // different patron for the next round without leaving this screen.
+  const pickerEl = document.getElementById('adminPatronPicker');
+  if(pickerEl) pickerEl.style.display = (USER && USER.matchType === 'admin') ? 'block' : 'none';
 }
 
 function clearActingAs(){
@@ -1221,6 +1235,47 @@ function actAsUser(user){
   ACTING_AS = { name: user.name, contact: contactOf_(user) };
   resetScanResult_();
   showScreen('scan');
+}
+
+// Same search as the Users tab, but embedded right on the Scan screen
+// itself (see adminPatronPicker) so an admin never has to leave it to
+// pick — or swap — who they're scanning for.
+const onScanPatronSearchInput = debounce_(async function(){
+  const query = document.getElementById('scanPatronSearch').value.trim();
+  const listEl = document.getElementById('scanPatronResults');
+  if(query.length < 2){ listEl.innerHTML = ''; return; }
+  listEl.innerHTML = '<p style="opacity:0.6;font-size:13px;">Searching…</p>';
+  try{
+    const res = await fetch(apiUrl_('searchUsers', { query }));
+    const data = await res.json();
+    renderScanPatronResults(data.candidates || []);
+  }catch(e){
+    listEl.innerHTML = '<div class="error-card">Could not reach the sheet. Check your connection and try again.</div>';
+  }
+}, 300);
+
+function renderScanPatronResults(candidates){
+  const listEl = document.getElementById('scanPatronResults');
+  const individuals = candidates.filter(c => c.type === 'individual');
+  if(!individuals.length){
+    listEl.innerHTML = '<p style="opacity:0.6;font-size:13px;">No users match your search.</p>';
+    return;
+  }
+  listEl.innerHTML = individuals.map((u,i) => `
+    <div class="book-row">
+      <div class="meta">
+        <div class="title">${escapeHtml(u.name)}</div>
+        <div class="sub">${escapeHtml(u.class)}${u.parent1?' · Parent 1: '+escapeHtml(u.parent1):''}${u.parent2?' · Parent 2: '+escapeHtml(u.parent2):''}</div>
+      </div>
+      <button class="btn btn-primary btn-sm" data-idx="${i}">Use for scan</button>
+    </div>`).join('');
+  listEl.querySelectorAll('button[data-idx]').forEach(btn=>{
+    btn.onclick = () => {
+      actAsUser(individuals[Number(btn.dataset.idx)]);
+      document.getElementById('scanPatronSearch').value = '';
+      listEl.innerHTML = '';
+    };
+  });
 }
 
 function nextItemId(){
