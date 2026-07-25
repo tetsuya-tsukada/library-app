@@ -1162,9 +1162,12 @@ function myLoans(namesCsv) {
   const names = String(namesCsv || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
   if (!names.length) return { error: 'Missing name' };
   const { data } = getBooksSheet_();
-  const rows = data.slice(1).filter(r => r[3] === 'Borrowed' && names.indexOf(String(r[4]).trim().toLowerCase()) !== -1);
+  const mine = data.slice(1).filter(r => names.indexOf(String(r[4]).trim().toLowerCase()) !== -1);
+  const loans = mine.filter(r => r[3] === 'Borrowed');
+  const pending = mine.filter(r => r[3] === 'Pending');
   return {
-    loans: rows.map(r => ({ itemId: r[0], title: r[1], borrowerName: r[4], borrowDate: r[6], dueDate: r[7] }))
+    loans: loans.map(r => ({ itemId: r[0], title: r[1], borrowerName: r[4], borrowDate: r[6], dueDate: r[7] })),
+    pending: pending.map(r => ({ itemId: r[0], title: r[1], borrowerName: r[4] }))
   };
 }
 
