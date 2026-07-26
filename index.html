@@ -654,7 +654,13 @@ async function loadRemoteConfig(){
     CONFIG.loanDays = parseInt(data.LoanDays, 10) || 14;
     // Missing/blank defaults to enabled — only an explicit false/0/no
     // (set via the Config tab's PatronLoginEnabled row) turns it off.
-    CONFIG.patronLoginEnabled = !/^(false|0|no)$/i.test(String(data.PatronLoginEnabled || '').trim());
+    // Using ?? rather than || here matters: Google Sheets silently turns
+    // a typed FALSE/TRUE into a real boolean cell, not text, so this
+    // value often arrives as the JS boolean `false` rather than the
+    // string "false" — `false || ''` would collapse that to '', which
+    // fails the regex below and defaults back to enabled, defeating the
+    // whole toggle. ?? only substitutes on null/undefined, not false.
+    CONFIG.patronLoginEnabled = !/^(false|0|no)$/i.test(String(data.PatronLoginEnabled ?? '').trim());
   }catch(e){
     console.warn('Could not load config from the sheet', e);
   }
