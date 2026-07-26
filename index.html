@@ -717,6 +717,15 @@ function updateScanIdentityBanner(){
   // different patron for the next round without leaving this screen.
   const pickerEl = document.getElementById('adminPatronPicker');
   if(pickerEl) pickerEl.style.display = (USER && USER.matchType === 'admin') ? 'block' : 'none';
+  // Same reasoning applies to the scan button itself: an admin with no
+  // patron picked has nothing to scan for, so hide it until ACTING_AS
+  // is set — but never while a scan session is already running, or
+  // "Done scanning" would become unreachable mid-session.
+  const scanBtn = document.getElementById('scanBtn');
+  if(scanBtn && !scanning){
+    const canScan = !(USER && USER.matchType === 'admin' && !ACTING_AS);
+    scanBtn.style.display = canScan ? '' : 'none';
+  }
 }
 
 function clearActingAs(){
