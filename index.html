@@ -723,6 +723,7 @@ function clearActingAs(){
   ACTING_AS = null;
   resetScanResult_();
   updateScanIdentityBanner();
+  refreshMyBooks(); // clears the stopped patron's borrow/pending list
 }
 
 async function toggleScanner(){
@@ -1042,6 +1043,10 @@ function escapeHtml(s){ const d=document.createElement('div'); d.textContent=s; 
 
 function myBooksNames_(){
   if(!USER) return [];
+  // An admin isn't on the User List themselves — once they've picked a
+  // patron to scan for (ACTING_AS), show that person's own current
+  // borrows/pending instead of nothing.
+  if(USER.matchType === 'admin') return ACTING_AS ? [ACTING_AS.name] : [];
   if(USER.matchType === 'parent') return [USER.name+' (Parent)'].concat(USER.children.map(c=>c.name));
   if(USER.matchType === 'individual') return [USER.name];
   return [];
@@ -1050,7 +1055,7 @@ function myBooksNames_(){
 async function refreshMyBooks(){
   const el = document.getElementById('myBooksSummary');
   if(!el) return;
-  if(!USER || USER.matchType === 'admin'){ el.innerHTML = ''; return; }
+  if(!USER){ el.innerHTML = ''; return; }
   const names = myBooksNames_();
   if(!names.length){ el.innerHTML = ''; return; }
   // Lets someone waiting on an admin's approval check again without
@@ -1260,39 +1265,83 @@ const onUsersSearchInput = debounce_(async function(){
   try{
     const res = await fetch(apiUrl_('searchUsers', { query }));
     const data = await res.json();
-    renderUsersResults(data.candidates || []);
+    renderPatronCandidates_(data.candidates || [], listEl);
   }catch(e){
     listEl.innerHTML = '<div class="error-card">Could not reach the sheet. Check your connection and try again.</div>';
   }
 }, 300);
 
-// Only individual rows are actionable here — an admin looking someone up
-// to scan on their behalf (e.g. a student with no phone) wants a specific
-// person, not the "parent of..." grouping shown on the sign-in page.
-function renderUsersResults(candidates){
-  const listEl = document.getElementById('usersList');
-  const individuals = candidates.filter(c => c.type === 'individual');
-  if(!individuals.length){
-    listEl.innerHTML = '<p style="opacity:0.6;font-size:13px;">No users match your search.</p>';
-    return;
-  }
-  listEl.innerHTML = individuals.map((u,i) => `
-    <div class="book-row">
-      <div class="meta">
-        <div class="title">${escapeHtml(u.name)}</div>
-        <div class="sub">${escapeHtml(u.class)}${u.parent1?' · Parent 1: '+escapeHtml(u.parent1):''}${u.parent2?' · Parent 2: '+escapeHtml(u.parent2):''}</div>
-      </div>
-      <button class="btn btn-primary btn-sm" data-idx="${i}">Use for scan</button>
-    </div>`).join('');
-  listEl.querySelectorAll('button[data-idx]').forEach(btn=>{
-    btn.onclick = () => actAsUser(individuals[Number(btn.dataset.idx)]);
-  });
-}
-
 function actAsUser(user){
   ACTING_AS = { name: user.name, contact: contactOf_(user) };
   resetScanResult_();
   showScreen('scan');
+}
+
+// A parent has no row of their own to act as directly — same as at
+// sign-in, tagged "(Parent)" so it can never collide with a same-named
+// child for the per-name borrow limit, and their own name doubles as
+// their contact since there's no one else to list.
+function actAsParentSelf_(parentName){
+  ACTING_AS = { name: parentName + ' (Parent)', contact: parentName };
+  resetScanResult_();
+  showScreen('scan');
+}
+
+// Shared by the Users tab and the Scan screen's embedded picker: shows
+// both individual rows and "parent of ..." groups, same as sign-in
+// search does. An individual is directly actionable; a parent group
+// isn't a single identity, so picking one expands into its children
+// (or the parent themself) so there's still one concrete person to
+// scan as. Clears listEl (and the search box, if one is given) once a
+// final selection is made.
+function renderPatronCandidates_(candidates, listEl, searchInputId){
+  if(!candidates.length){
+    listEl.innerHTML = '<p style="opacity:0.6;font-size:13px;">No users match your search.</p>';
+    return;
+  }
+  const finish_ = () => {
+    if(searchInputId){ const input = document.getElementById(searchInputId); if(input) input.value = ''; }
+    listEl.innerHTML = '';
+  };
+  listEl.innerHTML = candidates.map((c,i) => c.type === 'individual' ? `
+    <div class="book-row">
+      <div class="meta">
+        <div class="title">${escapeHtml(c.name)}</div>
+        <div class="sub">${escapeHtml(c.class)}${c.parent1?' · Parent 1: '+escapeHtml(c.parent1):''}${c.parent2?' · Parent 2: '+escapeHtml(c.parent2):''}</div>
+      </div>
+      <button class="btn btn-primary btn-sm" data-idx="${i}">Use for scan</button>
+    </div>` : `
+    <div class="book-row">
+      <div class="meta">
+        <div class="title">${escapeHtml(c.name)} <span style="opacity:0.6;font-weight:400;">(Parent)</span></div>
+        <div class="sub">Parent of ${escapeHtml(c.children.map(ch=>ch.name).join(', '))}</div>
+      </div>
+      <button class="btn btn-outline btn-sm" data-idx="${i}">Choose who</button>
+    </div>`).join('');
+  listEl.querySelectorAll('button[data-idx]').forEach(btn=>{
+    const c = candidates[Number(btn.dataset.idx)];
+    btn.onclick = () => {
+      if(c.type === 'individual'){ actAsUser(c); finish_(); }
+      else renderParentChildPicker_(c, listEl, finish_);
+    };
+  });
+}
+
+function renderParentChildPicker_(parentCandidate, listEl, finish_){
+  listEl.innerHTML = '<p class="section-sub" style="margin:0 0 8px;">Who is this for?</p>';
+  parentCandidate.children.forEach(child=>{
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-outline';
+    btn.style.marginBottom = '8px';
+    btn.textContent = child.name + (child.class ? ' ('+child.class+')' : '');
+    btn.onclick = () => { actAsUser(child); finish_(); };
+    listEl.appendChild(btn);
+  });
+  const selfBtn = document.createElement('button');
+  selfBtn.className = 'btn btn-primary';
+  selfBtn.textContent = 'Use ' + parentCandidate.name + ' (Parent)';
+  selfBtn.onclick = () => { actAsParentSelf_(parentCandidate.name); finish_(); };
+  listEl.appendChild(selfBtn);
 }
 
 // Same search as the Users tab, but embedded right on the Scan screen
@@ -1306,35 +1355,11 @@ const onScanPatronSearchInput = debounce_(async function(){
   try{
     const res = await fetch(apiUrl_('searchUsers', { query }));
     const data = await res.json();
-    renderScanPatronResults(data.candidates || []);
+    renderPatronCandidates_(data.candidates || [], listEl, 'scanPatronSearch');
   }catch(e){
     listEl.innerHTML = '<div class="error-card">Could not reach the sheet. Check your connection and try again.</div>';
   }
 }, 300);
-
-function renderScanPatronResults(candidates){
-  const listEl = document.getElementById('scanPatronResults');
-  const individuals = candidates.filter(c => c.type === 'individual');
-  if(!individuals.length){
-    listEl.innerHTML = '<p style="opacity:0.6;font-size:13px;">No users match your search.</p>';
-    return;
-  }
-  listEl.innerHTML = individuals.map((u,i) => `
-    <div class="book-row">
-      <div class="meta">
-        <div class="title">${escapeHtml(u.name)}</div>
-        <div class="sub">${escapeHtml(u.class)}${u.parent1?' · Parent 1: '+escapeHtml(u.parent1):''}${u.parent2?' · Parent 2: '+escapeHtml(u.parent2):''}</div>
-      </div>
-      <button class="btn btn-primary btn-sm" data-idx="${i}">Use for scan</button>
-    </div>`).join('');
-  listEl.querySelectorAll('button[data-idx]').forEach(btn=>{
-    btn.onclick = () => {
-      actAsUser(individuals[Number(btn.dataset.idx)]);
-      document.getElementById('scanPatronSearch').value = '';
-      listEl.innerHTML = '';
-    };
-  });
-}
 
 function nextItemId(){
   let max = 0;
