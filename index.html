@@ -464,6 +464,11 @@ async function onGateScanSuccess(decodedText){
 function showScreen(name){
   if((name==='shelf' || name==='approvals' || name==='users' || name==='summary') && !(USER && USER.isAdmin)) name = 'scan';
   if(name==='scan' && !USER) name = 'identify';
+  // With patron sign-in turned off (Config tab's PatronLoginEnabled),
+  // there's nothing useful on the landing page for a signed-out visitor
+  // — skip straight to Admin login instead of showing it a moment
+  // before redirecting, or making an admin click through it first.
+  if(name==='identify' && CONFIG.patronLoginEnabled === false) name = 'admin-login';
   const loadingEl = document.getElementById('appLoading');
   if(loadingEl) loadingEl.style.display = 'none';
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
