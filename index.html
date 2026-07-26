@@ -216,14 +216,17 @@
 
     <!-- IDENTIFY (login landing page) -->
     <section class="screen" id="screen-identify">
-      <h3 class="section-title">Sign in</h3>
-      <p class="section-sub">Start typing your name, or your parent's name — pick your record from the list.</p>
-      <div class="field">
-        <label>Name</label>
-        <input type="text" id="loginQuery" placeholder="Start typing…" oninput="onLoginSearchInput()">
+      <div id="patronLoginBlock">
+        <h3 class="section-title">Sign in</h3>
+        <p class="section-sub">Start typing your name, or your parent's name — pick your record from the list.</p>
+        <div class="field">
+          <label>Name</label>
+          <input type="text" id="loginQuery" placeholder="Start typing…" oninput="onLoginSearchInput()">
+        </div>
+        <p class="section-sub" id="signInStatus" style="color:#e8998a;"></p>
+        <div id="loginCandidates"></div>
       </div>
-      <p class="section-sub" id="signInStatus" style="color:#e8998a;"></p>
-      <div id="loginCandidates"></div>
+      <p class="section-sub" id="patronLoginDisabledNote" style="display:none;text-align:center;">Patron sign-in isn't available yet — admins can sign in below.</p>
       <p class="section-sub" style="text-align:center;margin-top:18px;">
         <a class="linklike" style="cursor:pointer;" onclick="showScreen('admin-login')">Admin login</a>
       </p>
@@ -644,9 +647,27 @@ async function loadRemoteConfig(){
     const res = await fetch(apiUrl_('getConfig'));
     const data = await res.json();
     CONFIG.loanDays = parseInt(data.LoanDays, 10) || 14;
+    // Missing/blank defaults to enabled — only an explicit false/0/no
+    // (set via the Config tab's PatronLoginEnabled row) turns it off.
+    CONFIG.patronLoginEnabled = !/^(false|0|no)$/i.test(String(data.PatronLoginEnabled || '').trim());
   }catch(e){
     console.warn('Could not load config from the sheet', e);
   }
+  applyPatronLoginVisibility_();
+}
+
+// Lets a school roll this out admin-only at first: with
+// PatronLoginEnabled set to false in the Config tab, the landing page
+// only offers Admin login — the patron search box, and the ability to
+// sign in as a patron at all, are hidden. Purely a UI-level gate, same
+// as the admin-only screen gating elsewhere — searchUsers itself still
+// works if called directly, so this isn't a security boundary.
+function applyPatronLoginVisibility_(){
+  const enabled = CONFIG.patronLoginEnabled !== false;
+  const block = document.getElementById('patronLoginBlock');
+  const note = document.getElementById('patronLoginDisabledNote');
+  if(block) block.style.display = enabled ? '' : 'none';
+  if(note) note.style.display = enabled ? 'none' : 'block';
 }
 
 function updateWhoBadge(){
