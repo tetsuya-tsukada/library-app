@@ -49,9 +49,14 @@
  *    "changeme" — change this immediately, it's the shared admin
  *    passcode), a SiteAccessCode row (default "changeme-site-code" —
  *    change this immediately too, see "HOW SITE ACCESS WORKS" below), a
- *    SiteAccessTTLHours row (default 24), and a SiteUrl row (your
- *    GitHub Pages URL, e.g. https://youruser.github.io/library-app/ —
- *    update it if you ever move the app to a different URL). Edit any
+ *    SiteAccessTTLHours row (default 24), a SiteUrl row (your GitHub
+ *    Pages URL, e.g. https://youruser.github.io/library-app/ — update
+ *    it if you ever move the app to a different URL), and a
+ *    PatronLoginEnabled row (default TRUE — set to FALSE to hide the
+ *    patron sign-in search box from the landing page entirely, leaving
+ *    only Admin login, for a rollout where only admins use the app at
+ *    first; this is a UI-level toggle only, not a security boundary,
+ *    same as the rest of the app's client-side role gating). Edit any
  *    of these any time — the app reads this tab on every load, so
  *    there's no code change or redeploy needed to update them. Changing
  *    LoanDays changes the default due date for future approvals only,
@@ -332,7 +337,8 @@ function setupConfigSheet() {
     AdminSecret: 'changeme',
     SiteAccessCode: 'changeme-site-code',
     SiteAccessTTLHours: String(SITE_ACCESS_TTL_HOURS),
-    SiteUrl: 'https://tetsuya-tsukada.github.io/library-app/'
+    SiteUrl: 'https://tetsuya-tsukada.github.io/library-app/',
+    PatronLoginEnabled: 'TRUE'
   };
   Object.keys(defaults).forEach(key => {
     if (!existingKeys[key]) sh.appendRow([key, defaults[key]]);
@@ -415,7 +421,7 @@ function verifySiteCode(code) {
 // ever hand back this filtered subset instead.
 function getPublicConfig() {
   const cfg = getConfig();
-  return { LoanDays: cfg.LoanDays, MaxBorrowItems: cfg.MaxBorrowItems };
+  return { LoanDays: cfg.LoanDays, MaxBorrowItems: cfg.MaxBorrowItems, PatronLoginEnabled: cfg.PatronLoginEnabled };
 }
 
 function getConfig() {
