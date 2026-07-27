@@ -739,12 +739,16 @@ function updateScanIdentityBanner(){
   const pickerEl = document.getElementById('adminPatronPicker');
   if(pickerEl) pickerEl.style.display = (USER && USER.matchType === 'admin') ? 'block' : 'none';
   // Same reasoning applies to the scan button itself: an admin with no
-  // patron picked has nothing to scan for, so hide it until ACTING_AS
-  // is set — but never while a scan session is already running, or
-  // "Done scanning" would become unreachable mid-session.
+  // patron picked has nothing to scan for, so hide it until ACTING_AS is
+  // set. For a family, it stays hidden until this round's member is also
+  // picked (see ensureFamilyRoundMemberPicked_) — but never while a scan
+  // session is already running, or "Done scanning" would become
+  // unreachable mid-session.
   const scanBtn = document.getElementById('scanBtn');
   if(scanBtn && !scanning){
-    const canScan = !(USER && USER.matchType === 'admin' && !ACTING_AS);
+    const canScan = USER && USER.matchType === 'admin'
+      ? !!ACTING_AS && (!ACTING_AS.children || !!familyRoundMember_)
+      : true;
     scanBtn.style.display = canScan ? '' : 'none';
   }
 }
@@ -757,22 +761,29 @@ function clearActingAs(){
   refreshMyBooks(); // clears the stopped patron's borrow/pending list
 }
 
+// Admin acting as a family must say who a round is for before the camera
+// opens — lets us check (and enforce) that person's remaining borrow
+// limit live while scanning, rather than discovering it was exceeded
+// only at final confirm. Called both right when the family is picked
+// (actAsFamily_ — no need to click Start scanning first) and again for
+// every later round via toggleScanner ("Scan more" re-enters through
+// it once familyRoundMember_ has been reset by stopScanningSession).
+// A real parent USER session is unaffected — that flow still defers
+// "who" until after scanning, unchanged.
+async function ensureFamilyRoundMemberPicked_(){
+  if(ACTING_AS && ACTING_AS.children && !familyRoundMember_){
+    await promptFamilyRoundMember_(ACTING_AS);
+  }
+}
+
 async function toggleScanner(){
   if(!USER){ showScreen('identify'); return; } // belt-and-suspenders: showScreen already keeps signed-out users off this screen
   if(scanning){
     await stopScanningSession();
     return;
   }
-  const family = currentFamily_();
-  // Admin acting as a family must say who this round is for before the
-  // camera opens — lets us check (and enforce) that person's remaining
-  // borrow limit live while scanning, rather than discovering it was
-  // exceeded only at final confirm. Resets every round (see
-  // stopScanningSession) so "Scan more" asks again for the next one.
-  if(family && !familyRoundMember_){
-    const picked = await promptFamilyRoundMember_(family);
-    if(!picked) return; // cancelled — stay on the Scan screen as-is
-  }
+  await ensureFamilyRoundMemberPicked_();
+  if(ACTING_AS && ACTING_AS.children && !familyRoundMember_) return; // cancelled — stay on the Scan screen as-is
   await beginScanningSession_();
 }
 
@@ -1412,10 +1423,15 @@ function actAsUser(user){
 // for afterward, same as a real parent USER session (see
 // currentFamily_/renderGroupAssignPrompt_). Lets an admin scan a mixed
 // batch for several kids (or the parent) without re-picking mid-round.
-function actAsFamily_(candidate){
+async function actAsFamily_(candidate){
   ACTING_AS = { name: candidate.name, contact: candidate.name, children: candidate.children };
+  familyRoundMember_ = null;
   resetScanResult_();
   showScreen('scan');
+  // Show the round-member picker (and the family's current borrows,
+  // already visible via refreshMyBooks above) right away — no need to
+  // click Start scanning first just to be asked who this is for.
+  await ensureFamilyRoundMemberPicked_();
 }
 
 // Shared by the Users tab and the Scan screen's embedded picker: shows
