@@ -198,10 +198,10 @@
   </header>
 
   <nav class="topnav">
-    <button id="nav-scan" onclick="showScreen('scan')">Scan</button>
+    <button id="nav-scan" onclick="showScreen('scan')">Borrow</button>
+    <button id="nav-return" style="display:none;" onclick="showScreen('return')">Return</button>
     <button id="nav-shelf" style="display:none;" onclick="showScreen('shelf')">Shelf</button>
     <button id="nav-approvals" style="display:none;" onclick="showScreen('approvals')">Approvals</button>
-    <button id="nav-users" style="display:none;" onclick="showScreen('users')">Users</button>
     <button id="nav-summary" style="display:none;" onclick="showScreen('summary')">Summary</button>
   </nav>
 
@@ -273,6 +273,22 @@
       <div id="scanQueueList"></div>
     </section>
 
+    <!-- RETURN (admin only) — a dedicated return-only scanning flow, since
+         returns don't need a patron picked first (the book's own record
+         already has the borrower) — see lookupAndQueueReturn_. -->
+    <section class="screen" id="screen-return">
+      <h3 class="section-title">Scan books back in</h3>
+      <p class="section-sub">Scan a book's QR code to return it — no need to pick a patron first.</p>
+      <button class="btn btn-primary" id="returnScanBtn" onclick="toggleReturnScanner()">Scan for return</button>
+      <div id="returnReaderWrap" style="display:none;">
+        <div id="returnReader"></div>
+        <div class="scan-toast" id="returnScanToast"></div>
+      </div>
+      <div id="returnResultArea"></div>
+      <p class="section-sub" id="returnScanNote" style="text-align:center;color:var(--gold);"></p>
+      <div id="returnQueueList"></div>
+    </section>
+
     <!-- SHELF -->
     <section class="screen" id="screen-shelf">
       <h3 class="section-title">The shelf</h3>
@@ -317,17 +333,6 @@
       <button class="btn btn-ghost" style="margin-top:10px;" onclick="loadApprovals()">Refresh</button>
       <div class="divider"></div>
       <div id="approvalsList"></div>
-    </section>
-
-    <!-- USERS (admin only) -->
-    <section class="screen" id="screen-users">
-      <h3 class="section-title">User list</h3>
-      <p class="section-sub">Start typing to search by class, name, or parent.</p>
-      <div class="field">
-        <label>Search</label>
-        <input type="text" id="usersSearch" placeholder="Start typing…" oninput="onUsersSearchInput()">
-      </div>
-      <div id="usersList"></div>
     </section>
 
     <!-- SUMMARY (admin only) -->
@@ -399,6 +404,17 @@ let processingItemId = null; // itemId currently mid-lookup, so repeat frames of
 let scanProcessing = false; // true while the pendingScans drain loop is running
 let familyRoundMember_ = null; // { name, contact, activeCount } — who an admin's current scanning round is for, when acting as a family (see currentFamily_/promptFamilyRoundMember_); reset each round so the next one asks again
 
+// RETURN screen state — deliberately separate from the borrow-flow
+// variables above. Returns don't need a patron picked first (the book's
+// own record already has the borrower), so this is a simpler, standalone
+// scan → queue → confirm loop with no family/round-member logic at all.
+let html5QrCodeReturn = null;
+let returnScanning = false;
+let returnQueue = []; // { itemId, title }
+let returnPendingScans = [];
+let returnProcessingItemId = null;
+let returnScanProcessing = false;
+
 async function toggleGateScanner(){
   const readerWrap = document.getElementById('gateReaderWrap');
   const btn = document.getElementById('gateScanBtn');
@@ -466,7 +482,7 @@ async function onGateScanSuccess(decodedText){
 }
 
 function showScreen(name){
-  if((name==='shelf' || name==='approvals' || name==='users' || name==='summary') && !(USER && USER.isAdmin)) name = 'scan';
+  if((name==='shelf' || name==='approvals' || name==='return' || name==='summary') && !(USER && USER.isAdmin)) name = 'scan';
   if(name==='scan' && !USER) name = 'identify';
   // With patron sign-in turned off (Config tab's PatronLoginEnabled),
   // there's nothing useful on the landing page for a signed-out visitor
@@ -484,10 +500,6 @@ function showScreen(name){
   if(name==='shelf') loadShelf();
   if(name==='approvals') loadApprovals();
   if(name==='summary') loadSummary();
-  if(name==='users'){
-    document.getElementById('usersSearch').value = '';
-    document.getElementById('usersList').innerHTML = '<p style="opacity:0.6;font-size:13px;">Type at least 2 characters to search.</p>';
-  }
   if(name==='scan'){ updateScanIdentityBanner(); refreshMyBooks(); }
 }
 
@@ -645,8 +657,8 @@ function applyAdminUI(isAdmin){
   if(shelfNav) shelfNav.style.display = isAdmin ? '' : 'none';
   const approvalsNav = document.getElementById('nav-approvals');
   if(approvalsNav) approvalsNav.style.display = isAdmin ? '' : 'none';
-  const usersNav = document.getElementById('nav-users');
-  if(usersNav) usersNav.style.display = isAdmin ? '' : 'none';
+  const returnNav = document.getElementById('nav-return');
+  if(returnNav) returnNav.style.display = isAdmin ? '' : 'none';
   const summaryNav = document.getElementById('nav-summary');
   if(summaryNav) summaryNav.style.display = isAdmin ? '' : 'none';
 }
@@ -725,7 +737,11 @@ function updateScanIdentityBanner(){
         : ' — pick who\'s borrowing before you start scanning';
       el.innerHTML = 'Scanning for <strong>'+escapeHtml(ACTING_AS.name)+'</strong>\'s family'+roundNote+' · <a class="linklike" style="cursor:pointer;" onclick="clearActingAs()">Stop</a>';
     } else if(ACTING_AS){
-      el.innerHTML = 'Scanning as <strong>'+escapeHtml(ACTING_AS.name)+'</strong> · <a class="linklike" style="cursor:pointer;" onclick="clearActingAs()">Stop</a>';
+      el.innerHTML = 'Scanning as <strong>'+escapeHtml(ACTING_AS.name)+'</strong><span id="scanIdentityCount"></span> · <a class="linklike" style="cursor:pointer;" onclick="clearActingAs()">Stop</a>';
+      showBorrowCountFor_(ACTING_AS.name, 'scanIdentityCount');
+    } else if(USER && USER.matchType === 'individual'){
+      el.innerHTML = 'Signed in as <strong>'+escapeHtml(USER.name)+'</strong><span id="scanIdentityCount"></span>';
+      showBorrowCountFor_(USER.name, 'scanIdentityCount');
     } else if(USER && USER.matchType === 'parent'){
       el.textContent = 'Signed in as '+USER.name+' — pick a child (or yourself) when borrowing.';
     } else {
@@ -910,6 +926,25 @@ function promptFamilyRoundMember_(family){
       resolve(false);
     };
   });
+}
+
+// Same "name — X/max" count shown per-option in promptFamilyRoundMember_
+// above, but for a single flat identity (an admin's picked patron, or a
+// patron signed in as themself) — see updateScanIdentityBanner.
+async function fetchBorrowCount_(name){
+  try{
+    const res = await fetch(apiUrl_('myLoans', { names: name }));
+    const data = await res.json();
+    return (data.loans || []).length + (data.pending || []).length;
+  }catch(e){ return null; }
+}
+
+async function showBorrowCountFor_(name, spanId){
+  const count = await fetchBorrowCount_(name);
+  const span = document.getElementById(spanId);
+  if(!span || count === null) return;
+  const max = CONFIG.maxBorrowItems || 4;
+  span.textContent = ' — ' + count + '/' + max + (count >= max ? ' (limit reached)' : '');
 }
 
 // Scans are only queued here — nothing is written to the sheet until the
@@ -1158,6 +1193,7 @@ async function commitScanQueue(){
   }
   renderQueueResults(results);
   refreshMyBooks();
+  updateScanIdentityBanner(); // keeps the "— X/max" count in sync with what was just borrowed/returned
 }
 
 function renderQueueResults(results){
@@ -1235,6 +1271,191 @@ async function refreshMyBooks(){
     }
     el.innerHTML = html;
   }catch(e){ el.innerHTML = refreshRow; }
+}
+
+// RETURN screen — deliberately independent of the borrow flow above (no
+// ACTING_AS/family/round-member logic): a book's own record already
+// knows who borrowed it, so returning it never needs a patron picked
+// first. See the returnQueue/returnScanning state block near the top.
+async function toggleReturnScanner(){
+  if(returnScanning){
+    await stopReturnScanningSession();
+    return;
+  }
+  await beginReturnScanningSession_();
+}
+
+async function beginReturnScanningSession_(){
+  const readerWrap = document.getElementById('returnReaderWrap');
+  const btn = document.getElementById('returnScanBtn');
+  returnPendingScans = [];
+  returnProcessingItemId = null;
+  returnScanProcessing = false;
+  document.getElementById('returnResultArea').innerHTML = '';
+  readerWrap.style.display = 'block';
+  btn.textContent = 'Done scanning';
+  returnScanning = true;
+  html5QrCodeReturn = new Html5Qrcode('returnReader');
+  html5QrCodeReturn.start(
+    { facingMode: 'environment' },
+    { fps: 10, qrbox: 220 },
+    onReturnScanSuccess,
+    ()=>{}
+  ).catch(err=>{
+    document.getElementById('returnResultArea').innerHTML =
+      '<div class="error-card">Camera access failed: '+err+'</div>';
+    returnScanning = false; btn.textContent = 'Scan for return'; readerWrap.style.display = 'none';
+  });
+}
+
+async function stopReturnScanningSession(){
+  const readerWrap = document.getElementById('returnReaderWrap');
+  const btn = document.getElementById('returnScanBtn');
+  await html5QrCodeReturn.stop();
+  readerWrap.style.display = 'none';
+  btn.textContent = 'Scan for return';
+  returnScanning = false;
+  await waitForReturnScansToSettle_();
+  if(returnQueue.length) renderReturnConfirmation();
+  else document.getElementById('returnResultArea').innerHTML = '';
+}
+
+function waitForReturnScansToSettle_(){
+  return new Promise(resolve => {
+    (function check(){
+      if(!returnScanProcessing && returnPendingScans.length === 0 && returnProcessingItemId === null) resolve();
+      else setTimeout(check, 100);
+    })();
+  });
+}
+
+async function onReturnScanSuccess(decodedText){
+  const itemId = decodedText.trim();
+  if(itemId === returnProcessingItemId) return; // still-visible code already being handled
+  if(returnQueue.some(q => q.itemId === itemId)){
+    flashReturnNote_('Already queued: '+itemId);
+    return;
+  }
+  if(returnPendingScans.includes(itemId)) return; // already waiting in line
+  returnPendingScans.push(itemId);
+  processReturnPendingScans_();
+}
+
+async function processReturnPendingScans_(){
+  if(returnScanProcessing) return;
+  returnScanProcessing = true;
+  while(returnPendingScans.length){
+    const itemId = returnPendingScans.shift();
+    if(returnQueue.some(q => q.itemId === itemId)) continue;
+    returnProcessingItemId = itemId;
+    await lookupAndQueueReturn_(itemId);
+    returnProcessingItemId = null;
+  }
+  returnScanProcessing = false;
+}
+
+async function lookupAndQueueReturn_(itemId){
+  try{
+    const res = await fetch(apiUrl_('lookup', { itemId }));
+    const data = await res.json();
+    if(data.error){ flashReturnNote_(data.error+' ('+itemId+')'); return; }
+    const status = data.status || 'Available';
+    if(status !== 'Borrowed'){
+      flashReturnNote_('"'+data.title+'" isn\'t currently borrowed.');
+      return;
+    }
+    returnQueue.push({ itemId, title: data.title });
+    renderReturnQueue();
+    flashReturnToast_('Return scanned — '+data.title);
+  }catch(e){
+    flashReturnNote_('Could not reach the sheet for '+itemId+'.');
+  }
+}
+
+function flashReturnNote_(msg){
+  const el = document.getElementById('returnScanNote');
+  if(!el) return;
+  el.textContent = msg;
+  clearTimeout(flashReturnNote_.t);
+  flashReturnNote_.t = setTimeout(()=>{ el.textContent=''; }, 3000);
+}
+
+function flashReturnToast_(msg){
+  const el = document.getElementById('returnScanToast');
+  if(!el) return;
+  el.textContent = '✓ ' + msg;
+  el.classList.add('show');
+  clearTimeout(flashReturnToast_.t);
+  flashReturnToast_.t = setTimeout(()=>{ el.classList.remove('show'); }, 1400);
+}
+
+function renderReturnQueue(){
+  const el = document.getElementById('returnQueueList');
+  if(!el) return;
+  if(!returnQueue.length){ el.innerHTML=''; return; }
+  el.innerHTML = '<p class="section-sub" style="margin:10px 0 6px;">'+returnQueue.length+' item'+(returnQueue.length===1?'':'s')+' scanned</p>' +
+    returnQueue.map((q,i) => `
+    <div class="book-row">
+      <div class="meta">
+        <div class="title">${escapeHtml(q.title)}</div>
+        <div class="sub">Return</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" data-idx="${i}">Remove</button>
+    </div>`).join('');
+  el.querySelectorAll('button[data-idx]').forEach(btn=>{
+    btn.onclick = () => { returnQueue.splice(Number(btn.dataset.idx), 1); renderReturnQueue(); };
+  });
+}
+
+function renderReturnConfirmation(){
+  const area = document.getElementById('returnResultArea');
+  area.innerHTML = `
+    <div class="stamp-card">
+      <div class="eyebrow">Confirm</div>
+      <h2>Return ${returnQueue.length} item${returnQueue.length===1?'':'s'}?</h2>
+      <div id="returnConfirmList" style="margin:10px 0;"></div>
+      <button class="btn btn-primary" id="confirmReturnQueueBtn">Confirm</button>
+      <button class="btn btn-outline" style="margin-top:10px;" id="cancelReturnQueueBtn">Cancel</button>
+    </div>`;
+  document.getElementById('returnConfirmList').innerHTML =
+    returnQueue.map(q => `<div class="detail-row"><span>Return</span><span>${escapeHtml(q.title)}</span></div>`).join('');
+  document.getElementById('confirmReturnQueueBtn').onclick = commitReturnQueue;
+  document.getElementById('cancelReturnQueueBtn').onclick = () => { returnQueue = []; renderReturnQueue(); area.innerHTML = ''; };
+}
+
+// No "name" is sent — the return branch of scanBook (Code.gs) ignores it
+// and uses the book's own existing borrower record instead.
+async function commitReturnQueue(){
+  const area = document.getElementById('returnResultArea');
+  const queue = returnQueue.slice();
+  returnQueue = [];
+  renderReturnQueue();
+  const adminEmail = (USER && USER.matchType === 'admin') ? USER.contact : '';
+  const results = [];
+  for(const q of queue){
+    area.innerHTML = '<p style="opacity:0.6;font-family:JetBrains Mono,monospace;font-size:12px;">Processing '+escapeHtml(q.title)+'…</p>';
+    try{
+      const url = apiUrl_('scan', { itemId: q.itemId, name: '', contact: '', adminEmail: adminEmail || undefined });
+      const res = await fetch(url);
+      const data = await res.json();
+      results.push({ q, data });
+    }catch(e){
+      results.push({ q, data: { error: 'Network error' } });
+    }
+  }
+  renderReturnQueueResults(results);
+}
+
+function renderReturnQueueResults(results){
+  const area = document.getElementById('returnResultArea');
+  area.innerHTML = '<div class="stamp-card"><div class="eyebrow">Done</div><h2>'+results.length+' processed</h2><div id="returnQueueResultsList"></div></div>';
+  const listEl = document.getElementById('returnQueueResultsList');
+  listEl.innerHTML = results.map(({q,data}) => {
+    let status;
+    if(data.error) status = 'Error: '+escapeHtml(data.error);
+    else status = 'Returned' + (data.borrowerName ? ' ('+escapeHtml(data.borrowerName)+')' : '');
+    return `<div class="detail-row"><span>${escapeHtml(q.title)}</span><span>${status}</span></div>`;
+  }).join('');
 }
 
 async function loadShelf(){
@@ -1394,23 +1615,6 @@ function renderSummaryDetail(key, label){
         <span class="status-pill borrowed">${it.dueDate ? new Date(it.dueDate).toLocaleDateString() : '—'}</span>
       </div>`).join('');
 }
-
-const onUsersSearchInput = debounce_(async function(){
-  const query = document.getElementById('usersSearch').value.trim();
-  const listEl = document.getElementById('usersList');
-  if(query.length < 2){
-    listEl.innerHTML = '<p style="opacity:0.6;font-size:13px;">Type at least 2 characters to search.</p>';
-    return;
-  }
-  listEl.innerHTML = '<p style="opacity:0.6;font-size:13px;">Searching…</p>';
-  try{
-    const res = await fetch(apiUrl_('searchUsers', { query }));
-    const data = await res.json();
-    renderPatronCandidates_(data.candidates || [], listEl);
-  }catch(e){
-    listEl.innerHTML = '<div class="error-card">Could not reach the sheet. Check your connection and try again.</div>';
-  }
-}, 300);
 
 function actAsUser(user){
   ACTING_AS = { name: user.name, contact: contactOf_(user) };
