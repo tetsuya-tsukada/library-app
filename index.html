@@ -700,10 +700,23 @@ function logout(){
   showScreen('identify');
 }
 
+// Whoever's "family" is active for batched, per-round borrower
+// assignment right now — either a real parent USER session, or an admin
+// who picked a parent via "Use family for scan" (see actAsFamily_).
+// Returns null for a single flat identity (or nobody yet), in which
+// case there's nothing to batch/assign — see lookupAndQueueScan_.
+function currentFamily_(){
+  if(ACTING_AS && ACTING_AS.children) return ACTING_AS;
+  if(!ACTING_AS && USER && USER.matchType === 'parent') return USER;
+  return null;
+}
+
 function updateScanIdentityBanner(){
   const el = document.getElementById('scanIdentityBanner');
   if(el){
-    if(ACTING_AS){
+    if(ACTING_AS && ACTING_AS.children){
+      el.innerHTML = 'Scanning for <strong>'+escapeHtml(ACTING_AS.name)+'</strong>\'s family — pick who when borrowing. · <a class="linklike" style="cursor:pointer;" onclick="clearActingAs()">Stop</a>';
+    } else if(ACTING_AS){
       el.innerHTML = 'Scanning as <strong>'+escapeHtml(ACTING_AS.name)+'</strong> · <a class="linklike" style="cursor:pointer;" onclick="clearActingAs()">Stop</a>';
     } else if(USER && USER.matchType === 'parent'){
       el.textContent = 'Signed in as '+USER.name+' — pick a child (or yourself) when borrowing.';
@@ -778,11 +791,12 @@ async function stopScanningSession(){
   // without this, we could decide what to show next before those land in
   // scanQueue/unassignedBorrows, undercounting either one.
   await waitForScansToSettle_();
-  if(USER && USER.matchType === 'parent' && !ACTING_AS){
-    // A parent session batches the "who's borrowing" decision to once per
-    // round (see renderGroupAssignPrompt_) and, after that, offers a
-    // choice to scan another round (e.g. for a different child, or
-    // themself) before finally reviewing everything together.
+  if(currentFamily_()){
+    // A family session (a real parent USER, or an admin acting as one)
+    // batches the "who's borrowing" decision to once per round (see
+    // renderGroupAssignPrompt_) and, after that, offers a choice to scan
+    // another round (e.g. for a different child, or themself) before
+    // finally reviewing everything together.
     if(unassignedBorrows.length){
       renderGroupAssignPrompt_();
     } else if(scanQueue.length){
@@ -849,15 +863,17 @@ async function lookupAndQueueScan_(itemId){
     if(data.error){ flashScanNote_(data.error+' ('+itemId+')'); return; }
     const status = data.status || 'Available';
     if(status === 'Pending'){ flashScanNote_('"'+data.title+'" is already awaiting approval.'); return; }
+    const family = currentFamily_();
     if(status === 'Available'){
-      if(ACTING_AS){
-        addToQueue_(itemId, data.title, 'borrow', ACTING_AS.name, ACTING_AS.contact);
-      } else if(USER.matchType === 'parent'){
+      if(family){
         // Don't interrupt scanning to ask who this is for — that's
         // batched into a single prompt for the whole round once scanning
-        // stops (see renderGroupAssignPrompt_).
+        // stops (see renderGroupAssignPrompt_). Covers both a real
+        // parent USER session and an admin acting as a family.
         unassignedBorrows.push({ itemId, title: data.title });
         renderScanQueue();
+      } else if(ACTING_AS){
+        addToQueue_(itemId, data.title, 'borrow', ACTING_AS.name, ACTING_AS.contact);
       } else if(USER.matchType === 'admin'){
         // Only people on the User List can borrow — an admin isn't one,
         // so borrowing under their own admin identity isn't allowed.
@@ -868,8 +884,8 @@ async function lookupAndQueueScan_(itemId){
         addToQueue_(itemId, data.title, 'borrow', USER.name, USER.contact);
       }
     } else { // Borrowed
-      const placeholderName = ACTING_AS ? ACTING_AS.name : (USER.matchType==='parent' ? USER.children[0].name : USER.name);
-      const placeholderContact = ACTING_AS ? ACTING_AS.contact : (USER.matchType==='parent' ? contactOf_(USER.children[0]) : USER.contact);
+      const placeholderName = family ? family.children[0].name : (ACTING_AS ? ACTING_AS.name : USER.name);
+      const placeholderContact = family ? contactOf_(family.children[0]) : (ACTING_AS ? ACTING_AS.contact : USER.contact);
       addToQueue_(itemId, data.title, 'return', placeholderName, placeholderContact);
     }
   }catch(e){
@@ -878,10 +894,13 @@ async function lookupAndQueueScan_(itemId){
 }
 
 // Asked once per scanning round (after Stop), for every borrow scanned by
-// a parent session this round — not once per book — then assigns all of
-// them to whichever child (or the parent themself) is picked.
+// a family session this round — not once per book — then assigns all of
+// them to whichever child (or the parent themself) is picked. Works the
+// same whether the family is a real parent USER session or an admin
+// acting as one (see currentFamily_).
 function renderGroupAssignPrompt_(){
   const area = document.getElementById('resultArea');
+  const family = currentFamily_();
   const count = unassignedBorrows.length;
   area.innerHTML = `
     <div class="stamp-card">
@@ -890,7 +909,7 @@ function renderGroupAssignPrompt_(){
       <div id="groupAssignButtons" style="margin-top:14px;display:flex;flex-direction:column;gap:8px;"></div>
     </div>`;
   const holder = document.getElementById('groupAssignButtons');
-  USER.children.forEach(child=>{
+  family.children.forEach(child=>{
     const btn = document.createElement('button');
     btn.className = 'btn btn-outline';
     btn.textContent = child.name + (child.class ? ' ('+child.class+')' : '');
@@ -899,10 +918,10 @@ function renderGroupAssignPrompt_(){
   });
   const selfBtn = document.createElement('button');
   selfBtn.className = 'btn btn-primary';
-  selfBtn.textContent = 'Borrow for myself ('+USER.name+')';
+  selfBtn.textContent = 'Use ' + family.name + ' (Parent)';
   // Tagged "(Parent)" so this can never collide with a child of the same
   // name for the per-name borrow limit, and reads clearly in the Sheet.
-  selfBtn.onclick = () => assignUnassignedBorrows_(USER.name + ' (Parent)', USER.name);
+  selfBtn.onclick = () => assignUnassignedBorrows_(family.name + ' (Parent)', family.name);
   holder.appendChild(selfBtn);
 }
 
@@ -1052,11 +1071,12 @@ function escapeHtml(s){ const d=document.createElement('div'); d.textContent=s; 
 
 function myBooksNames_(){
   if(!USER) return [];
+  const family = currentFamily_();
+  if(family) return [family.name+' (Parent)'].concat(family.children.map(c=>c.name));
   // An admin isn't on the User List themselves — once they've picked a
   // patron to scan for (ACTING_AS), show that person's own current
   // borrows/pending instead of nothing.
   if(USER.matchType === 'admin') return ACTING_AS ? [ACTING_AS.name] : [];
-  if(USER.matchType === 'parent') return [USER.name+' (Parent)'].concat(USER.children.map(c=>c.name));
   if(USER.matchType === 'individual') return [USER.name];
   return [];
 }
@@ -1286,23 +1306,23 @@ function actAsUser(user){
   showScreen('scan');
 }
 
-// A parent has no row of their own to act as directly — same as at
-// sign-in, tagged "(Parent)" so it can never collide with a same-named
-// child for the per-name borrow limit, and their own name doubles as
-// their contact since there's no one else to list.
-function actAsParentSelf_(parentName){
-  ACTING_AS = { name: parentName + ' (Parent)', contact: parentName };
+// Acting as a whole family (a parent group) instead of one flat
+// identity — batches scans across the round and asks who each one is
+// for afterward, same as a real parent USER session (see
+// currentFamily_/renderGroupAssignPrompt_). Lets an admin scan a mixed
+// batch for several kids (or the parent) without re-picking mid-round.
+function actAsFamily_(candidate){
+  ACTING_AS = { name: candidate.name, contact: candidate.name, children: candidate.children };
   resetScanResult_();
   showScreen('scan');
 }
 
 // Shared by the Users tab and the Scan screen's embedded picker: shows
 // both individual rows and "parent of ..." groups, same as sign-in
-// search does. An individual is directly actionable; a parent group
-// isn't a single identity, so picking one expands into its children
-// (or the parent themself) so there's still one concrete person to
-// scan as. Clears listEl (and the search box, if one is given) once a
-// final selection is made.
+// search does. An individual is a single flat identity to scan as
+// immediately; a parent group instead sets up family/batch mode (see
+// actAsFamily_) so who each scanned book is for gets decided per round.
+// Clears listEl (and the search box, if one is given) once picked.
 function renderPatronCandidates_(candidates, listEl, searchInputId){
   if(!candidates.length){
     listEl.innerHTML = '<p style="opacity:0.6;font-size:13px;">No users match your search.</p>';
@@ -1325,32 +1345,16 @@ function renderPatronCandidates_(candidates, listEl, searchInputId){
         <div class="title">${escapeHtml(c.name)} <span style="opacity:0.6;font-weight:400;">(Parent)</span></div>
         <div class="sub">Parent of ${escapeHtml(c.children.map(ch=>ch.name).join(', '))}</div>
       </div>
-      <button class="btn btn-outline btn-sm" data-idx="${i}">Choose who</button>
+      <button class="btn btn-outline btn-sm" data-idx="${i}">Use family for scan</button>
     </div>`).join('');
   listEl.querySelectorAll('button[data-idx]').forEach(btn=>{
     const c = candidates[Number(btn.dataset.idx)];
     btn.onclick = () => {
-      if(c.type === 'individual'){ actAsUser(c); finish_(); }
-      else renderParentChildPicker_(c, listEl, finish_);
+      if(c.type === 'individual') actAsUser(c);
+      else actAsFamily_(c);
+      finish_();
     };
   });
-}
-
-function renderParentChildPicker_(parentCandidate, listEl, finish_){
-  listEl.innerHTML = '<p class="section-sub" style="margin:0 0 8px;">Who is this for?</p>';
-  parentCandidate.children.forEach(child=>{
-    const btn = document.createElement('button');
-    btn.className = 'btn btn-outline';
-    btn.style.marginBottom = '8px';
-    btn.textContent = child.name + (child.class ? ' ('+child.class+')' : '');
-    btn.onclick = () => { actAsUser(child); finish_(); };
-    listEl.appendChild(btn);
-  });
-  const selfBtn = document.createElement('button');
-  selfBtn.className = 'btn btn-primary';
-  selfBtn.textContent = 'Use ' + parentCandidate.name + ' (Parent)';
-  selfBtn.onclick = () => { actAsParentSelf_(parentCandidate.name); finish_(); };
-  listEl.appendChild(selfBtn);
 }
 
 // Same search as the Users tab, but embedded right on the Scan screen
