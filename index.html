@@ -394,6 +394,7 @@ let unassignedBorrows = []; // { itemId, title } — borrows scanned by a parent
 let pendingScans = []; // itemIds waiting to be looked up (fed from onScanSuccess faster than we can process)
 let processingItemId = null; // itemId currently mid-lookup, so repeat frames of it are ignored
 let scanProcessing = false; // true while the pendingScans drain loop is running
+let familyRoundMember_ = null; // { name, contact, activeCount } — who an admin's current scanning round is for, when acting as a family (see currentFamily_/promptFamilyRoundMember_); reset each round so the next one asks again
 
 async function toggleGateScanner(){
   const readerWrap = document.getElementById('gateReaderWrap');
@@ -652,6 +653,7 @@ async function loadRemoteConfig(){
     const res = await fetch(apiUrl_('getConfig'));
     const data = await res.json();
     CONFIG.loanDays = parseInt(data.LoanDays, 10) || 14;
+    CONFIG.maxBorrowItems = parseInt(data.MaxBorrowItems, 10) || 4;
     // Missing/blank defaults to enabled — only an explicit false/0/no
     // (set via the Config tab's PatronLoginEnabled row) turns it off.
     // Using ?? rather than || here matters: Google Sheets silently turns
@@ -715,7 +717,10 @@ function updateScanIdentityBanner(){
   const el = document.getElementById('scanIdentityBanner');
   if(el){
     if(ACTING_AS && ACTING_AS.children){
-      el.innerHTML = 'Scanning for <strong>'+escapeHtml(ACTING_AS.name)+'</strong>\'s family — pick who when borrowing. · <a class="linklike" style="cursor:pointer;" onclick="clearActingAs()">Stop</a>';
+      const roundNote = familyRoundMember_
+        ? ' — this round: <strong>'+escapeHtml(familyRoundMember_.name)+'</strong>'
+        : ' — pick who\'s borrowing before you start scanning';
+      el.innerHTML = 'Scanning for <strong>'+escapeHtml(ACTING_AS.name)+'</strong>\'s family'+roundNote+' · <a class="linklike" style="cursor:pointer;" onclick="clearActingAs()">Stop</a>';
     } else if(ACTING_AS){
       el.innerHTML = 'Scanning as <strong>'+escapeHtml(ACTING_AS.name)+'</strong> · <a class="linklike" style="cursor:pointer;" onclick="clearActingAs()">Stop</a>';
     } else if(USER && USER.matchType === 'parent'){
@@ -743,6 +748,7 @@ function updateScanIdentityBanner(){
 
 function clearActingAs(){
   ACTING_AS = null;
+  familyRoundMember_ = null;
   resetScanResult_();
   updateScanIdentityBanner();
   refreshMyBooks(); // clears the stopped patron's borrow/pending list
@@ -750,12 +756,26 @@ function clearActingAs(){
 
 async function toggleScanner(){
   if(!USER){ showScreen('identify'); return; } // belt-and-suspenders: showScreen already keeps signed-out users off this screen
-  const readerWrap = document.getElementById('readerWrap');
-  const btn = document.getElementById('scanBtn');
   if(scanning){
     await stopScanningSession();
     return;
   }
+  const family = currentFamily_();
+  // Admin acting as a family must say who this round is for before the
+  // camera opens — lets us check (and enforce) that person's remaining
+  // borrow limit live while scanning, rather than discovering it was
+  // exceeded only at final confirm. Resets every round (see
+  // stopScanningSession) so "Scan more" asks again for the next one.
+  if(family && !familyRoundMember_){
+    const picked = await promptFamilyRoundMember_(family);
+    if(!picked) return; // cancelled — stay on the Scan screen as-is
+  }
+  await beginScanningSession_();
+}
+
+async function beginScanningSession_(){
+  const readerWrap = document.getElementById('readerWrap');
+  const btn = document.getElementById('scanBtn');
   // Deliberately not clearing scanQueue/unassignedBorrows here — "Scan
   // more" (see renderScanMoreOrReview_) re-enters through this same
   // function, and anything already assigned or awaiting assignment from
@@ -787,10 +807,14 @@ async function stopScanningSession(){
   readerWrap.style.display='none';
   btn.textContent='Start scanning';
   scanning=false;
+  // The round just ended — clear who it was for so the next one (via
+  // "Scan more" or a fresh Start) asks again via promptFamilyRoundMember_.
+  familyRoundMember_ = null;
   // The last scan or two may still be mid-lookup when the camera stops —
   // without this, we could decide what to show next before those land in
   // scanQueue/unassignedBorrows, undercounting either one.
   await waitForScansToSettle_();
+  updateScanIdentityBanner();
   if(currentFamily_()){
     // A family session (a real parent USER, or an admin acting as one)
     // batches the "who's borrowing" decision to once per round (see
@@ -817,6 +841,60 @@ function waitForScansToSettle_(){
       if(!scanProcessing && pendingScans.length === 0 && processingItemId === null) resolve();
       else setTimeout(check, 100);
     })();
+  });
+}
+
+// Shown before the camera opens for a family session (see toggleScanner)
+// so the admin says who this round's scans belong to up front — letting
+// this round's borrows be checked against that person's remaining borrow
+// limit live, instead of only discovering an overage at final confirm.
+// Resolves true once picked, or false if cancelled. Options already at
+// the limit are shown disabled rather than hidden, so it's clear why.
+function promptFamilyRoundMember_(family){
+  return new Promise(async resolve => {
+    const area = document.getElementById('resultArea');
+    area.innerHTML = '<p class="section-sub" style="text-align:center;">Checking borrow limits…</p>';
+    const max = CONFIG.maxBorrowItems || 4;
+    const options = family.children.map(c => ({ name: c.name, label: c.name + (c.class ? ' ('+c.class+')' : ''), contact: contactOf_(c) }))
+      .concat([{ name: family.name + ' (Parent)', label: 'Use '+family.name+' (Parent)', contact: family.name, isSelf: true }]);
+    let counts = {};
+    try{
+      const res = await fetch(apiUrl_('myLoans', { names: options.map(o => o.name).join(',') }));
+      const data = await res.json();
+      const all = (data.loans || []).concat(data.pending || []);
+      options.forEach(o => {
+        counts[o.name] = all.filter(x => String(x.borrowerName || '').trim().toLowerCase() === o.name.trim().toLowerCase()).length;
+      });
+    }catch(e){ /* couldn't check — show the picker anyway rather than block on a network hiccup */ }
+    area.innerHTML = `
+      <div class="stamp-card">
+        <div class="eyebrow">Who's borrowing this round?</div>
+        <h2>${escapeHtml(family.name)}'s family</h2>
+        <div id="familyRoundButtons" style="margin-top:14px;display:flex;flex-direction:column;gap:8px;"></div>
+        <button class="btn btn-outline" style="margin-top:10px;" id="cancelFamilyRoundBtn">Cancel</button>
+      </div>`;
+    const holder = document.getElementById('familyRoundButtons');
+    options.forEach(o=>{
+      const count = counts[o.name] || 0;
+      const atLimit = count >= max;
+      const btn = document.createElement('button');
+      btn.className = o.isSelf ? 'btn btn-primary' : 'btn btn-outline';
+      btn.disabled = atLimit;
+      btn.textContent = (o.isSelf ? o.label : o.label) + ' — ' + count + '/' + max + (atLimit ? ' (limit reached)' : '');
+      if(!atLimit){
+        btn.onclick = () => {
+          familyRoundMember_ = { name: o.name, contact: o.contact, activeCount: count };
+          area.innerHTML = '';
+          updateScanIdentityBanner();
+          resolve(true);
+        };
+      }
+      holder.appendChild(btn);
+    });
+    document.getElementById('cancelFamilyRoundBtn').onclick = () => {
+      area.innerHTML = '';
+      resolve(false);
+    };
   });
 }
 
@@ -863,13 +941,27 @@ async function lookupAndQueueScan_(itemId){
     if(data.error){ flashScanNote_(data.error+' ('+itemId+')'); return; }
     const status = data.status || 'Available';
     if(status === 'Pending'){ flashScanNote_('"'+data.title+'" is already awaiting approval.'); return; }
-    const family = currentFamily_();
+
+    const isAdminFamily = ACTING_AS && ACTING_AS.children;
+    const realParentFamily = (!ACTING_AS && USER.matchType === 'parent') ? USER : null;
+
     if(status === 'Available'){
-      if(family){
+      if(isAdminFamily){
+        // Who this scan belongs to was already decided at the start of
+        // this round (see promptFamilyRoundMember_), so the borrow limit
+        // is enforced live here instead of only discovering an overage
+        // once the round ends.
+        const max = CONFIG.maxBorrowItems || 4;
+        const alreadyQueued = scanQueue.filter(q => q.action === 'borrow' && q.name === familyRoundMember_.name).length;
+        if((familyRoundMember_.activeCount || 0) + alreadyQueued >= max){
+          flashScanNote_(familyRoundMember_.name+' has reached the borrow limit ('+max+'). Return a book, or pick someone else next round.');
+        } else {
+          addToQueue_(itemId, data.title, 'borrow', familyRoundMember_.name, familyRoundMember_.contact);
+        }
+      } else if(realParentFamily){
         // Don't interrupt scanning to ask who this is for — that's
         // batched into a single prompt for the whole round once scanning
-        // stops (see renderGroupAssignPrompt_). Covers both a real
-        // parent USER session and an admin acting as a family.
+        // stops (see renderGroupAssignPrompt_).
         unassignedBorrows.push({ itemId, title: data.title });
         renderScanQueue();
       } else if(ACTING_AS){
@@ -884,9 +976,11 @@ async function lookupAndQueueScan_(itemId){
         addToQueue_(itemId, data.title, 'borrow', USER.name, USER.contact);
       }
     } else { // Borrowed
-      const placeholderName = family ? family.children[0].name : (ACTING_AS ? ACTING_AS.name : USER.name);
-      const placeholderContact = family ? contactOf_(family.children[0]) : (ACTING_AS ? ACTING_AS.contact : USER.contact);
-      addToQueue_(itemId, data.title, 'return', placeholderName, placeholderContact);
+      const placeholder = isAdminFamily ? familyRoundMember_
+        : realParentFamily ? { name: realParentFamily.children[0].name, contact: contactOf_(realParentFamily.children[0]) }
+        : ACTING_AS ? ACTING_AS
+        : { name: USER.name, contact: USER.contact };
+      addToQueue_(itemId, data.title, 'return', placeholder.name, placeholder.contact);
     }
   }catch(e){
     flashScanNote_('Could not reach the sheet for '+itemId+'.');
@@ -1093,10 +1187,14 @@ async function refreshMyBooks(){
   // gives it breathing room below the scan button/camera above it,
   // rather than sitting flush against them.
   const refreshRow = '<div style="display:flex;justify-content:flex-end;margin:18px 0 6px;"><button class="btn btn-ghost btn-sm" onclick="refreshMyBooks()">Refresh</button></div>';
+  // More than one possible name means this is an aggregated family view
+  // (a real parent session, or an admin acting as one) — show whose book
+  // is whose. A single name is unambiguous, so skip the annotation there.
+  const showBorrower = names.length > 1;
   const bookRow = (b, pill) => `
     <div class="book-row">
       <div class="meta">
-        <div class="title">${escapeHtml(b.title)}${USER.matchType==='parent' ? ' <span style="opacity:0.5;font-weight:400;">('+escapeHtml(b.borrowerName)+')</span>' : ''}</div>
+        <div class="title">${escapeHtml(b.title)}${showBorrower ? ' <span style="opacity:0.5;font-weight:400;">('+escapeHtml(b.borrowerName)+')</span>' : ''}</div>
       </div>
       ${pill}
     </div>`;
