@@ -1636,13 +1636,21 @@ async function actAsFamily_(candidate){
   // already visible via refreshMyBooks above) right away — no need to
   // click Start scanning first just to be asked who this is for.
   await ensureFamilyRoundMemberPicked_();
+  // ...and once someone's picked, go straight into scanning — same as
+  // "Scan more" already does in toggleScanner — instead of leaving them
+  // to tap Start scanning again for a member they just chose. If they
+  // cancelled the picker instead, familyRoundMember_ is still null and
+  // we just stay on the Scan screen as-is.
+  if(ACTING_AS.children && familyRoundMember_){
+    await beginScanningSession_();
+  }
 }
 
-// Shared by the Users tab and the Scan screen's embedded picker: shows
-// both individual rows and "parent of ..." groups, same as sign-in
-// search does. An individual is a single flat identity to scan as
-// immediately; a parent group instead sets up family/batch mode (see
-// actAsFamily_) so who each scanned book is for gets decided per round.
+// Used by the Scan screen's embedded "Find patron" picker: shows both
+// individual rows and "parent of ..." groups, same as sign-in search
+// does. An individual is a single flat identity to scan as immediately;
+// a parent group instead sets up family/batch mode (see actAsFamily_) so
+// who each scanned book is for gets decided per round.
 // Clears listEl (and the search box, if one is given) once picked.
 function renderPatronCandidates_(candidates, listEl, searchInputId){
   if(!candidates.length){
