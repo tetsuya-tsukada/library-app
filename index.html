@@ -73,6 +73,10 @@
     padding:8px;border-radius:4px;border:1px solid var(--line);
     background:var(--ink-2);color:var(--paper);font-family:'Inter',sans-serif;font-size:13px;
   }
+  select{
+    width:100%;padding:14px;border-radius:4px;border:1px solid var(--line);
+    background:var(--ink-2);color:var(--paper);font-family:'Inter',sans-serif;font-size:15px;
+  }
   label{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--gold);display:block;margin-bottom:6px;}
   .field{margin-bottom:18px;}
   .btn-sm{width:auto;padding:8px 14px;font-size:13px;}
@@ -300,28 +304,38 @@
       <p class="section-sub" id="shelfCount">Loading…</p>
       <button class="btn btn-ghost" onclick="loadShelf()">Refresh</button>
       <div class="divider"></div>
-      <h3 class="section-title" style="font-size:15px;">Add a book</h3>
-      <div class="field">
-        <label>Scan cover with camera (optional)</label>
-        <input type="file" accept="image/*" capture="environment" id="coverPhoto" onchange="scanCoverPhoto(event)">
-        <p class="section-sub" id="ocrStatus" style="margin:6px 0 0;"></p>
+      <button class="btn btn-outline" id="toggleAddBookBtn" onclick="toggleAddBookForm()">Add books</button>
+      <div id="addBookForm" style="display:none;margin-top:16px;">
+        <div class="field">
+          <label>Scan cover with camera (optional)</label>
+          <input type="file" accept="image/*" capture="environment" id="coverPhoto" onchange="scanCoverPhoto(event)">
+          <p class="section-sub" id="ocrStatus" style="margin:6px 0 0;"></p>
+        </div>
+        <div class="field">
+          <label>Title</label>
+          <input type="text" id="newTitle" placeholder="Book title">
+        </div>
+        <div class="field">
+          <label>Author</label>
+          <input type="text" id="newAuthor" placeholder="Author (optional)">
+        </div>
+        <button class="btn btn-primary" onclick="addBook()">Add & generate label</button>
+        <div id="newLabelArea"></div>
       </div>
-      <div class="field">
-        <label>Title</label>
-        <input type="text" id="newTitle" placeholder="Book title">
-      </div>
-      <div class="field">
-        <label>Author</label>
-        <input type="text" id="newAuthor" placeholder="Author (optional)">
-      </div>
-      <button class="btn btn-primary" onclick="addBook()">Add & generate label</button>
-      <div id="newLabelArea"></div>
       <div class="divider"></div>
       <h3 class="section-title" style="font-size:15px;">All books</h3>
-      <p class="section-sub">Printable QR label sheets are generated from the Google Sheet — open it and use the 📚 Library menu → Print QR labels.</p>
       <div class="field">
         <label>Search</label>
         <input type="text" id="shelfSearch" placeholder="Search by title, author, or borrower" oninput="renderBookList()">
+      </div>
+      <div class="field">
+        <label>Filter</label>
+        <select id="shelfStatusFilter" onchange="renderBookList()">
+          <option value="all">All books</option>
+          <option value="available">Available</option>
+          <option value="borrowed">Borrowed</option>
+          <option value="pending">Awaiting approval</option>
+        </select>
       </div>
       <div id="bookList"></div>
     </section>
@@ -521,7 +535,15 @@ function showScreen(name){
   if(el) el.classList.add('active');
   const nav = document.getElementById('nav-'+name);
   if(nav) nav.classList.add('active');
-  if(name==='shelf') loadShelf();
+  if(name==='shelf'){
+    // Collapsed by default on every fresh visit via the nav — but not on
+    // the internal loadShelf() calls from the Refresh button or right
+    // after adding a book, which would otherwise snap shut the label
+    // that addBook() just rendered inside this same form.
+    const form = document.getElementById('addBookForm'); if(form) form.style.display = 'none';
+    const btn = document.getElementById('toggleAddBookBtn'); if(btn) btn.textContent = 'Add books';
+    loadShelf();
+  }
   if(name==='approvals') loadApprovals();
   if(name==='summary') loadSummary();
   if(name==='scan'){
@@ -710,12 +732,27 @@ async function adminLogin(){
 function applyAdminUI(isAdmin){
   const shelfNav = document.getElementById('nav-shelf');
   if(shelfNav) shelfNav.style.display = isAdmin ? '' : 'none';
-  const approvalsNav = document.getElementById('nav-approvals');
-  if(approvalsNav) approvalsNav.style.display = isAdmin ? '' : 'none';
+  updateApprovalsNavVisibility_();
   const returnNav = document.getElementById('nav-return');
   if(returnNav) returnNav.style.display = isAdmin ? '' : 'none';
   const summaryNav = document.getElementById('nav-summary');
   if(summaryNav) summaryNav.style.display = isAdmin ? '' : 'none';
+}
+
+// Approvals only ever has anything in it when patron self-service is on
+// — an admin-initiated scan always skips the Pending step entirely (see
+// scanBookBatch in Code.gs), so with PatronLoginEnabled off there's
+// nothing this screen could ever show. Depends on both the signed-in
+// admin's own status and the config toggle, which load independently
+// (see init's Promise.all) — called from wherever either one might have
+// just changed, so it settles on the right answer regardless of which
+// finishes loading first.
+function updateApprovalsNavVisibility_(){
+  const approvalsNav = document.getElementById('nav-approvals');
+  if(!approvalsNav) return;
+  const isAdmin = !!(USER && USER.isAdmin);
+  const patronLoginOn = CONFIG.patronLoginEnabled !== false;
+  approvalsNav.style.display = (isAdmin && patronLoginOn) ? '' : 'none';
 }
 
 async function loadRemoteConfig(){
@@ -751,6 +788,7 @@ function applyPatronLoginVisibility_(){
   const note = document.getElementById('patronLoginDisabledNote');
   if(block) block.style.display = enabled ? '' : 'none';
   if(note) note.style.display = enabled ? 'none' : 'block';
+  updateApprovalsNavVisibility_();
 }
 
 function updateWhoBadge(){
@@ -1583,6 +1621,17 @@ function renderReturnQueueResults(results){
   }).join('');
 }
 
+// Collapsed by default — most Shelf visits are just to browse/search,
+// not to add a book, so keeping these fields out of the way until asked
+// for them keeps the screen from feeling cluttered up front.
+function toggleAddBookForm(){
+  const form = document.getElementById('addBookForm');
+  const btn = document.getElementById('toggleAddBookBtn');
+  const open = form.style.display !== 'none';
+  form.style.display = open ? 'none' : 'block';
+  btn.textContent = open ? 'Add books' : 'Cancel';
+}
+
 async function loadShelf(){
   const countEl = document.getElementById('shelfCount');
   countEl.textContent = 'Loading…';
@@ -1598,14 +1647,26 @@ async function loadShelf(){
   }
 }
 
+// Book status as stored on the sheet is blank for on-shelf books — this
+// normalizes that to 'available' so it lines up with the filter's option
+// values.
+function bookStatusKey_(b){
+  if(b.Status === 'Borrowed') return 'borrowed';
+  if(b.Status === 'Pending') return 'pending';
+  return 'available';
+}
+
 function renderBookList(){
   const listEl = document.getElementById('bookList');
   const q = (document.getElementById('shelfSearch').value || '').trim().toLowerCase();
-  const filtered = !q ? bookCache : bookCache.filter(b =>
-    String(b.Title||'').toLowerCase().includes(q) ||
-    String(b.Author||'').toLowerCase().includes(q) ||
-    String(b.BorrowerName||'').toLowerCase().includes(q)
-  );
+  const statusFilter = document.getElementById('shelfStatusFilter').value;
+  const filtered = bookCache.filter(b => {
+    if(statusFilter !== 'all' && bookStatusKey_(b) !== statusFilter) return false;
+    if(!q) return true;
+    return String(b.Title||'').toLowerCase().includes(q) ||
+      String(b.Author||'').toLowerCase().includes(q) ||
+      String(b.BorrowerName||'').toLowerCase().includes(q);
+  });
   listEl.innerHTML = filtered.map(b=>{
     const pillClass = b.Status==='Borrowed' ? 'borrowed' : (b.Status==='Pending' ? 'pending' : 'avail');
     const pillLabel = b.Status==='Borrowed' ? 'Out' : (b.Status==='Pending' ? 'Awaiting approval' : 'On shelf');
@@ -1618,7 +1679,7 @@ function renderBookList(){
       </div>
       <span class="status-pill ${pillClass}">${pillLabel}</span>
     </div>`;
-  }).join('') || '<p style="opacity:0.6;font-size:13px;">No books match your search.</p>';
+  }).join('') || '<p style="opacity:0.6;font-size:13px;">No books match your search or filter.</p>';
 }
 
 let approvalsCache = [];
