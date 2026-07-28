@@ -1184,6 +1184,10 @@ function renderQueueConfirmation(){
   document.getElementById('cancelQueueBtn').onclick = () => { scanQueue = []; unassignedBorrows = []; renderScanQueue(); document.getElementById('resultArea').innerHTML=''; };
 }
 
+// Sent as one batched request (see scanBookBatch in Code.gs) rather than
+// one fetch per book — scanning a stack of books used to mean a full
+// Sheets round trip for every single one; now it's a single round trip
+// no matter how many were scanned.
 async function commitScanQueue(){
   const area = document.getElementById('resultArea');
   const queue = scanQueue.slice();
@@ -1192,23 +1196,29 @@ async function commitScanQueue(){
   // An admin scanning — whether for themself or, via "Use for scan", on
   // behalf of a patron they looked up — is already the authority that
   // would otherwise approve the request a moment later, so borrows they
-  // scan skip the Pending step entirely (see scanBook in Code.gs).
+  // scan skip the Pending step entirely (see scanBookBatch in Code.gs).
   const adminEmail = (USER && USER.matchType === 'admin') ? USER.contact : '';
-  const results = [];
-  for(const q of queue){
-    area.innerHTML = '<p style="opacity:0.6;font-family:JetBrains Mono,monospace;font-size:12px;">Processing '+escapeHtml(q.title)+'…</p>';
-    try{
-      const url = apiUrl_('scan', { itemId: q.itemId, name: q.name, contact: q.contact || '', adminEmail: adminEmail || undefined });
-      const res = await fetch(url);
-      const data = await res.json();
-      results.push({ q, data });
-    }catch(e){
-      results.push({ q, data: { error: 'Network error' } });
-    }
-  }
+  area.innerHTML = '<p style="opacity:0.6;font-family:JetBrains Mono,monospace;font-size:12px;">Processing '+queue.length+' item'+(queue.length===1?'':'s')+'…</p>';
+  const results = await commitBatch_(queue, adminEmail);
   renderQueueResults(results);
   refreshMyBooks();
   updateScanIdentityBanner(); // keeps the "— X/max" count in sync with what was just borrowed/returned
+}
+
+// Shared by commitScanQueue and commitReturnQueue — both just hand it a
+// list of { itemId, name, contact } and get back one { q, data } pair per
+// entry, in the same order, ready for their own results renderer.
+async function commitBatch_(queue, adminEmail){
+  try{
+    const items = queue.map(q => ({ itemId: q.itemId, name: q.name || '', contact: q.contact || '' }));
+    const url = apiUrl_('scanBatch', { items: JSON.stringify(items), adminEmail: adminEmail || undefined });
+    const res = await fetch(url);
+    const data = await res.json();
+    if(data.error) return queue.map(q => ({ q, data: { error: data.error } }));
+    return queue.map((q, i) => ({ q, data: (data.results && data.results[i]) || { error: 'No result returned' } }));
+  }catch(e){
+    return queue.map(q => ({ q, data: { error: 'Network error' } }));
+  }
 }
 
 function renderQueueResults(results){
@@ -1438,26 +1448,18 @@ function renderReturnConfirmation(){
   document.getElementById('cancelReturnQueueBtn').onclick = () => { returnQueue = []; renderReturnQueue(); area.innerHTML = ''; };
 }
 
-// No "name" is sent — the return branch of scanBook (Code.gs) ignores it
-// and uses the book's own existing borrower record instead.
+// No "name" is sent — the return branch of scanBookBatch (Code.gs)
+// ignores it and uses each book's own existing borrower record instead.
+// Batched the same way as commitScanQueue — one request for the whole
+// queue rather than one per book.
 async function commitReturnQueue(){
   const area = document.getElementById('returnResultArea');
   const queue = returnQueue.slice();
   returnQueue = [];
   renderReturnQueue();
   const adminEmail = (USER && USER.matchType === 'admin') ? USER.contact : '';
-  const results = [];
-  for(const q of queue){
-    area.innerHTML = '<p style="opacity:0.6;font-family:JetBrains Mono,monospace;font-size:12px;">Processing '+escapeHtml(q.title)+'…</p>';
-    try{
-      const url = apiUrl_('scan', { itemId: q.itemId, name: '', contact: '', adminEmail: adminEmail || undefined });
-      const res = await fetch(url);
-      const data = await res.json();
-      results.push({ q, data });
-    }catch(e){
-      results.push({ q, data: { error: 'Network error' } });
-    }
-  }
+  area.innerHTML = '<p style="opacity:0.6;font-family:JetBrains Mono,monospace;font-size:12px;">Processing '+queue.length+' item'+(queue.length===1?'':'s')+'…</p>';
+  const results = await commitBatch_(queue, adminEmail);
   renderReturnQueueResults(results);
 }
 

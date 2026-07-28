@@ -678,6 +678,9 @@ function doGet(e) {
         case 'scan':
           result = scanBook(e.parameter.itemId, e.parameter.name, e.parameter.contact, e.parameter.adminEmail);
           break;
+        case 'scanBatch':
+          result = scanBookBatch(e.parameter.items, e.parameter.adminEmail);
+          break;
         case 'list':
           result = listBooks();
           break;
@@ -804,6 +807,130 @@ function scanBook(itemId, name, contact, adminEmail) {
     logTx_(itemId, title, 'Return', prevName, prevContact);
     return { action: 'return', itemId, title, borrowerName: prevName };
   }
+}
+
+// Same per-item borrow/return/pending rules as scanBook above, but for a
+// whole batch of scans (see index.html's commitScanQueue/
+// commitReturnQueue) in one shot. Scanning several books used to mean one
+// full Books-sheet read plus one write (plus another read inside
+// countActiveLoans_) per book — each a separate round trip to the Sheets
+// service, which is the slow part, not the lookup logic itself. This
+// reads the sheet once, applies every item to the in-memory data, then
+// writes back only the rows that actually changed (grouped into
+// contiguous runs so a batch of adjacent rows is still just one write) —
+// never touching rows this batch didn't modify, so a concurrent edit to
+// some other book isn't clobbered by a stale re-write of the whole sheet.
+// Transactions/Approvals rows are appended the same way: one batched
+// append each instead of one per item.
+function scanBookBatch(itemsJson, adminEmail) {
+  let items;
+  try {
+    items = JSON.parse(itemsJson || '[]');
+  } catch (e) {
+    return { error: 'Malformed items payload' };
+  }
+  if (!Array.isArray(items) || !items.length) return { error: 'No items to process' };
+
+  const { sh, data } = getBooksSheet_();
+  const now = new Date();
+  const isAdminScan = !!adminEmail && isAdmin_(adminEmail);
+  const maxItems = getMaxBorrowItems_();
+
+  // Running in-memory active-loan counts per name, seeded from the sheet
+  // once and adjusted as the batch is simulated — so borrowing several
+  // books for the same person in one batch enforces the limit across the
+  // whole batch, not just against the pre-batch snapshot.
+  const activeCounts = {};
+  for (let i = 1; i < data.length; i++) {
+    const status = data[i][3];
+    const bName = String(data[i][4] || '').trim().toLowerCase();
+    if ((status === 'Borrowed' || status === 'Pending') && bName) {
+      activeCounts[bName] = (activeCounts[bName] || 0) + 1;
+    }
+  }
+
+  const touchedRows = []; // indices into `data` whose columns D:I changed
+  const txRows = [];
+  const approvalRows = [];
+  const results = [];
+
+  items.forEach(item => {
+    const itemId = item.itemId;
+    const name = item.name || '';
+    const contact = item.contact || '';
+    const row = findRow_(data, itemId);
+    if (row === -1) { results.push({ itemId, error: 'Book not found' }); return; }
+    const title = data[row][1];
+    const currentStatus = data[row][3] || 'Available';
+
+    if (currentStatus === 'Available') {
+      if (!name) { results.push({ itemId, title, error: 'Name required to borrow' }); return; }
+      const key = name.trim().toLowerCase();
+      const activeCount = activeCounts[key] || 0;
+      if (activeCount >= maxItems) {
+        results.push({ itemId, title, error: 'Borrow limit reached (' + maxItems + ' items). Return a book before borrowing another.' });
+        return;
+      }
+      activeCounts[key] = activeCount + 1;
+      if (isAdminScan) {
+        const due = new Date(now.getTime() + getLoanDays_() * 24 * 60 * 60 * 1000);
+        data[row][3] = 'Borrowed'; data[row][4] = name; data[row][5] = contact || '';
+        data[row][6] = now; data[row][7] = due;
+        data[row][8] = (parseInt(data[row][8], 10) || 0) + 1;
+        touchedRows.push(row);
+        txRows.push([now, itemId, title, 'Borrow', name, contact]);
+        results.push({ action: 'borrow', itemId, title, borrowerName: name, dueDate: due });
+      } else {
+        const requestId = itemId + '-' + now.getTime() + '-' + Math.floor(Math.random() * 1000);
+        data[row][3] = 'Pending'; data[row][4] = name; data[row][5] = contact || '';
+        data[row][6] = now; data[row][7] = '';
+        touchedRows.push(row);
+        approvalRows.push([requestId, now, itemId, title, name, contact || '', 'Pending', '', '', '']);
+        results.push({ action: 'pending', itemId, title, requestId });
+      }
+    } else if (currentStatus === 'Pending') {
+      // Already awaiting approval — hand back the existing request so the app can keep polling it
+      const requestId = findPendingRequestId_(itemId);
+      results.push({ action: 'pending', itemId, title, requestId });
+    } else {
+      // RETURN — always immediate, never needs approval
+      const prevName = data[row][4];
+      const prevContact = data[row][5];
+      data[row][3] = 'Available'; data[row][4] = ''; data[row][5] = '';
+      data[row][6] = ''; data[row][7] = '';
+      touchedRows.push(row);
+      txRows.push([now, itemId, title, 'Return', prevName, prevContact]);
+      results.push({ action: 'return', itemId, title, borrowerName: prevName });
+    }
+  });
+
+  touchedRows.sort(function (a, b) { return a - b; });
+  let i = 0;
+  while (i < touchedRows.length) {
+    let j = i;
+    while (j + 1 < touchedRows.length && touchedRows[j + 1] === touchedRows[j] + 1) j++;
+    const startRow = touchedRows[i]; // index into `data`; sheet row = startRow + 1
+    const count = j - i + 1;
+    const values = [];
+    for (let k = 0; k < count; k++) {
+      const r = data[startRow + k];
+      values.push([r[3], r[4], r[5], r[6], r[7], r[8]]);
+    }
+    sh.getRange(startRow + 1, 4, count, 6).setValues(values); // columns D:I
+    i = j + 1;
+  }
+  if (txRows.length) {
+    const txSh = getSS().getSheetByName(TX_SHEET);
+    txSh.getRange(txSh.getLastRow() + 1, 1, txRows.length, 6).setValues(txRows);
+  }
+  if (approvalRows.length) {
+    const apSh = getSS().getSheetByName(APPROVALS_SHEET);
+    const startRow = apSh.getLastRow() + 1;
+    apSh.getRange(startRow, 1, approvalRows.length, approvalRows[0].length).setValues(approvalRows);
+    applyApprovalValidation_(apSh, startRow, approvalRows.length);
+  }
+
+  return { results: results };
 }
 
 // Books currently Borrowed or Pending under this name, counted against
