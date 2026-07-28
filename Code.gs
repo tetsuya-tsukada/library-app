@@ -1231,17 +1231,31 @@ function searchUsers(query) {
   Object.keys(parentGroups).forEach(key => {
     const group = parentGroups[key];
     const seenChildren = {};
+    // Every guardian who shares this family's children — not just the
+    // one whose name this group happens to be keyed on. A child with
+    // both Parent1 and Parent2 set belongs to one family with two
+    // guardians, not two separate families; without this, only whichever
+    // parent name was searched/clicked ever showed up as a "family
+    // member" option (see promptFamilyRoundMember_/myBooksNames_), and
+    // the other guardian was never selectable at all.
+    const guardianKeys = {}; // normalized -> display name
     for (let i = 1; i < data.length; i++) {
       const row = userRowToObject_(data[i]);
-      const p1 = String(row.parent1 || '').trim().toLowerCase();
-      const p2 = String(row.parent2 || '').trim().toLowerCase();
-      if (p1 !== key && p2 !== key) continue;
+      const p1 = String(row.parent1 || '').trim();
+      const p2 = String(row.parent2 || '').trim();
+      const p1Key = p1.toLowerCase();
+      const p2Key = p2.toLowerCase();
+      if (p1Key !== key && p2Key !== key) continue;
       const childKey = rowKey_(row);
-      if (seenChildren[childKey]) continue; // same duplicate-row guard as above
-      seenChildren[childKey] = true;
-      group.children.push(row);
+      if (!seenChildren[childKey]) {
+        seenChildren[childKey] = true;
+        group.children.push(row);
+      }
+      if (p1 && !guardianKeys[p1Key]) guardianKeys[p1Key] = p1;
+      if (p2 && !guardianKeys[p2Key]) guardianKeys[p2Key] = p2;
     }
-    candidates.push({ type: 'parent', name: group.displayName, children: group.children });
+    const guardians = Object.keys(guardianKeys).map(k => guardianKeys[k]);
+    candidates.push({ type: 'parent', name: group.displayName, children: group.children, guardians: guardians });
   });
 
   return { candidates };
