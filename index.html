@@ -416,6 +416,7 @@ let familyRoundMember_ = null; // { name, contact, activeCount } — who an admi
 // "no round member yet" alone to tell "still deciding" apart from
 // "already done" when deciding whether to clear a stale result card.
 let familyPickerOpen_ = false;
+let currentScreenName_ = null; // the screen showScreen last actually landed on — used to detect leaving the Borrow screen for another tab
 
 // RETURN screen state — deliberately separate from the borrow-flow
 // variables above. Returns don't need a patron picked first (the book's
@@ -502,6 +503,16 @@ function showScreen(name){
   // — skip straight to Admin login instead of showing it a moment
   // before redirecting, or making an admin click through it first.
   if(name==='identify' && CONFIG.patronLoginEnabled === false) name = 'admin-login';
+  // Leaving the Borrow screen for another tab while an admin had a
+  // patron (or family) picked to scan for — clear that pick so coming
+  // back later can't accidentally scan for them without re-picking
+  // first. Skipped while the camera's actually open (scanning): stopping
+  // it properly needs an awaited html5QrCode.stop() (see
+  // stopScanningSession), and abandoning it here instead would leave
+  // that stream running and risk clashing with a second one later.
+  if(currentScreenName_ === 'scan' && name !== 'scan' && ACTING_AS && !scanning){
+    clearActingAs();
+  }
   const loadingEl = document.getElementById('appLoading');
   if(loadingEl) loadingEl.style.display = 'none';
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
@@ -531,6 +542,7 @@ function showScreen(name){
     const area = document.getElementById('returnResultArea'); if(area) area.innerHTML = '';
     const note = document.getElementById('returnScanNote'); if(note) note.textContent = '';
   }
+  currentScreenName_ = name;
 }
 
 async function init(){
