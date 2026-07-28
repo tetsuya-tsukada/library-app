@@ -502,7 +502,24 @@ function showScreen(name){
   if(name==='shelf') loadShelf();
   if(name==='approvals') loadApprovals();
   if(name==='summary') loadSummary();
-  if(name==='scan'){ updateScanIdentityBanner(); refreshMyBooks(); }
+  if(name==='scan'){
+    // Clears a stale "Done" confirmation card left over from the last
+    // completed batch when switching back to this tab from elsewhere —
+    // but only once there's nothing left in progress: an unconfirmed
+    // queue, or (for a family) the "who's borrowing this round?" picker
+    // still awaiting a pick, both need to survive a trip to another tab
+    // and back.
+    const familyAwaitingPick = !!(ACTING_AS && ACTING_AS.children && !familyRoundMember_);
+    if(!scanQueue.length && !unassignedBorrows.length && !familyAwaitingPick){
+      const area = document.getElementById('resultArea'); if(area) area.innerHTML = '';
+      const note = document.getElementById('scanNote'); if(note) note.textContent = '';
+    }
+    updateScanIdentityBanner(); refreshMyBooks();
+  }
+  if(name==='return' && !returnQueue.length){
+    const area = document.getElementById('returnResultArea'); if(area) area.innerHTML = '';
+    const note = document.getElementById('returnScanNote'); if(note) note.textContent = '';
+  }
 }
 
 async function init(){
