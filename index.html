@@ -768,7 +768,28 @@ function updateScanIdentityBanner(){
       ? !!ACTING_AS && (!ACTING_AS.children || !!familyRoundMember_)
       : true;
     scanBtn.style.display = canScan ? '' : 'none';
+    // Reset here on every render; showBorrowCountFor_ re-disables it a
+    // moment later, once its async count check resolves, for a flat
+    // individual identity only (see below) — this avoids it staying
+    // stuck disabled from whoever was picked before.
+    scanBtn.disabled = false;
+    scanBtn.textContent = 'Start scanning';
   }
+}
+
+// Disables "Start scanning" once the person currently picked to scan for
+// (an admin's individual pick, or a patron signed in as themself) has no
+// borrowing room left — there's nothing useful to scan for them until
+// they return a book, and letting them scan anyway would just fail at
+// the final confirm instead of right here. A family round member can
+// never start already at the limit — promptFamilyRoundMember_ disables
+// picking one in the first place — so this only applies to the flat
+// identity case.
+function updateScanBtnLimitState_(atLimit){
+  const scanBtn = document.getElementById('scanBtn');
+  if(!scanBtn || scanning) return;
+  scanBtn.disabled = atLimit;
+  scanBtn.textContent = atLimit ? 'Borrow limit reached' : 'Start scanning';
 }
 
 function clearActingAs(){
@@ -958,8 +979,18 @@ async function showBorrowCountFor_(name, spanId){
   const count = await fetchBorrowCount_(name);
   const span = document.getElementById(spanId);
   if(!span || count === null) return;
+  // Guard against a slow, now-stale fetch from a previously-picked
+  // identity landing after a different one has since been chosen —
+  // the span itself gets replaced on every render, so its presence
+  // alone doesn't prove this response is still the current identity's.
+  const currentName = (ACTING_AS && !ACTING_AS.children) ? ACTING_AS.name
+    : (USER && USER.matchType === 'individual') ? USER.name
+    : null;
+  if(currentName !== name) return;
   const max = CONFIG.maxBorrowItems || 4;
-  span.textContent = ' — ' + count + '/' + max + (count >= max ? ' (limit reached)' : '');
+  const atLimit = count >= max;
+  span.textContent = ' — ' + count + '/' + max + (atLimit ? ' (limit reached)' : '');
+  updateScanBtnLimitState_(atLimit);
 }
 
 // Scans are only queued here — nothing is written to the sheet until the
