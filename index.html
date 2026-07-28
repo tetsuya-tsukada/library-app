@@ -1116,6 +1116,7 @@ async function onScanSuccess(decodedText){
   }
   if(pendingScans.includes(itemId)) return; // already waiting in line
   pendingScans.push(itemId);
+  updateScanBtnProcessingState_();
   processPendingScans_();
 }
 
@@ -1130,6 +1131,22 @@ async function processPendingScans_(){
     processingItemId = null;
   }
   scanProcessing = false;
+  updateScanBtnProcessingState_();
+}
+
+// Disables "Done scanning" for as long as a just-scanned book is still
+// being looked up. Without this, tapping Done right after the last scan
+// could stop the camera while that lookup's fetch was still in flight —
+// stopScanningSession does wait for it (waitForScansToSettle_), but a
+// disabled button makes it impossible to even try clicking through that
+// window in the first place, closing the gap where the last item risked
+// never landing in the queue at all. Only touches the button while the
+// camera's actually open — the pre-scan "Start scanning" disabled state
+// (borrow limit reached) is governed separately, in updateScanIdentityBanner.
+function updateScanBtnProcessingState_(){
+  const scanBtn = document.getElementById('scanBtn');
+  if(!scanBtn || !scanning) return;
+  scanBtn.disabled = scanProcessing || pendingScans.length > 0 || processingItemId !== null;
 }
 
 async function lookupAndQueueScan_(itemId){
@@ -1506,6 +1523,7 @@ async function onReturnScanSuccess(decodedText){
   }
   if(returnPendingScans.includes(itemId)) return; // already waiting in line
   returnPendingScans.push(itemId);
+  updateReturnBtnProcessingState_();
   processReturnPendingScans_();
 }
 
@@ -1520,6 +1538,17 @@ async function processReturnPendingScans_(){
     returnProcessingItemId = null;
   }
   returnScanProcessing = false;
+  updateReturnBtnProcessingState_();
+}
+
+// Same reasoning as updateScanBtnProcessingState_ on the Borrow screen —
+// disables "Done scanning" here for as long as a just-scanned book is
+// still being looked up, so the last scan of a round can't be lost by
+// tapping Done during that window.
+function updateReturnBtnProcessingState_(){
+  const returnBtn = document.getElementById('returnScanBtn');
+  if(!returnBtn || !returnScanning) return;
+  returnBtn.disabled = returnScanProcessing || returnPendingScans.length > 0 || returnProcessingItemId !== null;
 }
 
 async function lookupAndQueueReturn_(itemId){
