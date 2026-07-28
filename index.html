@@ -1000,7 +1000,7 @@ function promptFamilyRoundMember_(family){
           <div class="title">${escapeHtml(o.label)}</div>
           <div class="sub">${count}/${max}${atLimit ? ' · limit reached' : ''}</div>
         </div>
-        <button class="btn ${o.isSelf ? 'btn-primary' : 'btn-outline'} btn-sm" ${atLimit ? 'disabled' : ''}>${atLimit ? 'Limit reached' : 'Select'}</button>`;
+        <button class="btn btn-primary btn-sm" ${atLimit ? 'disabled' : ''}>${atLimit ? 'Limit reached' : 'Select'}</button>`;
       if(!atLimit){
         row.querySelector('button').onclick = () => {
           familyRoundMember_ = { name: o.name, contact: o.contact, activeCount: serverCount };
