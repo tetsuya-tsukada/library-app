@@ -77,8 +77,11 @@
   .field{margin-bottom:18px;}
   .btn-sm{width:auto;padding:8px 14px;font-size:13px;}
 
-  /* Scan screen */
-  #readerWrap{position:relative;margin:16px 0;}
+  /* Scan screen — #returnReaderWrap needs the same position:relative so
+     its .scan-toast (position:absolute) stays contained within the
+     camera box instead of escaping to the nearest positioned ancestor
+     up the page. */
+  #readerWrap, #returnReaderWrap{position:relative;margin:16px 0;}
   #reader{border-radius:8px;overflow:hidden;border:1px solid var(--line);}
   #reader video{border-radius:8px;}
 
