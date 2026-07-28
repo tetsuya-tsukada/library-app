@@ -751,11 +751,13 @@ function updateScanIdentityBanner(){
     }
   }
   // Admins can't borrow under their own name (see lookupAndQueueScan_),
-  // so the patron picker stays visible on the Scan screen the whole
-  // time — not just until one's picked — making it easy to swap to a
-  // different patron for the next round without leaving this screen.
+  // so the patron picker stays visible on the Scan screen whenever the
+  // camera isn't open — not just until one's picked — making it easy to
+  // swap to a different patron for the next round without leaving this
+  // screen. Hidden while actually scanning, though, to keep that screen
+  // simple and focused on the camera.
   const pickerEl = document.getElementById('adminPatronPicker');
-  if(pickerEl) pickerEl.style.display = (USER && USER.matchType === 'admin') ? 'block' : 'none';
+  if(pickerEl) pickerEl.style.display = (USER && USER.matchType === 'admin' && !scanning) ? 'block' : 'none';
   // Same reasoning applies to the scan button itself: an admin with no
   // patron picked has nothing to scan for, so hide it until ACTING_AS is
   // set. For a family, it stays hidden until this round's member is also
@@ -840,6 +842,7 @@ async function beginScanningSession_(){
   readerWrap.style.display='block';
   btn.textContent='Done scanning';
   scanning=true;
+  updateScanIdentityBanner(); // hides the patron picker now that the camera's open
   html5QrCode = new Html5Qrcode('reader');
   html5QrCode.start(
     { facingMode: 'environment' },
@@ -850,6 +853,7 @@ async function beginScanningSession_(){
     document.getElementById('resultArea').innerHTML =
       '<div class="error-card">Camera access failed: '+err+'</div>';
     scanning=false; btn.textContent='Start scanning'; readerWrap.style.display='none';
+    updateScanIdentityBanner(); // camera never actually opened — bring the picker back
   });
 }
 
