@@ -405,6 +405,14 @@ let pendingScans = []; // itemIds waiting to be looked up (fed from onScanSucces
 let processingItemId = null; // itemId currently mid-lookup, so repeat frames of it are ignored
 let scanProcessing = false; // true while the pendingScans drain loop is running
 let familyRoundMember_ = null; // { name, contact, activeCount } — who an admin's current scanning round is for, when acting as a family (see currentFamily_/promptFamilyRoundMember_); reset each round so the next one asks again
+// True only while promptFamilyRoundMember_'s picker is actually on
+// screen awaiting a tap. Deliberately separate from familyRoundMember_
+// being null: that also happens to be true right after a round has
+// fully finished and been confirmed (stopScanningSession resets it
+// before the confirmation card ever renders), so showScreen can't use
+// "no round member yet" alone to tell "still deciding" apart from
+// "already done" when deciding whether to clear a stale result card.
+let familyPickerOpen_ = false;
 
 // RETURN screen state — deliberately separate from the borrow-flow
 // variables above. Returns don't need a patron picked first (the book's
@@ -506,11 +514,11 @@ function showScreen(name){
     // Clears a stale "Done" confirmation card left over from the last
     // completed batch when switching back to this tab from elsewhere —
     // but only once there's nothing left in progress: an unconfirmed
-    // queue, or (for a family) the "who's borrowing this round?" picker
-    // still awaiting a pick, both need to survive a trip to another tab
-    // and back.
-    const familyAwaitingPick = !!(ACTING_AS && ACTING_AS.children && !familyRoundMember_);
-    if(!scanQueue.length && !unassignedBorrows.length && !familyAwaitingPick){
+    // queue, or the "who's borrowing this round?" picker still actually
+    // on screen (familyPickerOpen_ — not just "no round member yet",
+    // which is also true right after a round has already finished and
+    // been confirmed), both need to survive a trip to another tab and back.
+    if(!scanQueue.length && !unassignedBorrows.length && !familyPickerOpen_){
       const area = document.getElementById('resultArea'); if(area) area.innerHTML = '';
       const note = document.getElementById('scanNote'); if(note) note.textContent = '';
     }
@@ -729,6 +737,8 @@ function handleWhoBadgeClick(){
 function logout(){
   USER = null;
   ACTING_AS = null;
+  familyRoundMember_ = null;
+  familyPickerOpen_ = false;
   localStorage.removeItem('stacks_user');
   updateWhoBadge();
   applyAdminUI(false);
@@ -814,6 +824,7 @@ function updateScanBtnLimitState_(atLimit){
 function clearActingAs(){
   ACTING_AS = null;
   familyRoundMember_ = null;
+  familyPickerOpen_ = false; // Stop can be clicked mid-picker — its promise is left unresolved, but the flag must not stay stuck
   resetScanResult_();
   updateScanIdentityBanner();
   refreshMyBooks(); // clears the stopped patron's borrow/pending list
@@ -926,6 +937,7 @@ function waitForScansToSettle_(){
 // the limit are shown disabled rather than hidden, so it's clear why.
 function promptFamilyRoundMember_(family){
   return new Promise(async resolve => {
+    familyPickerOpen_ = true;
     const area = document.getElementById('resultArea');
     area.innerHTML = '<p class="section-sub" style="text-align:center;">Checking borrow limits…</p>';
     const max = CONFIG.maxBorrowItems || 4;
@@ -971,6 +983,7 @@ function promptFamilyRoundMember_(family){
       if(!atLimit){
         row.querySelector('button').onclick = () => {
           familyRoundMember_ = { name: o.name, contact: o.contact, activeCount: serverCount };
+          familyPickerOpen_ = false;
           area.innerHTML = '';
           updateScanIdentityBanner();
           resolve(true);
@@ -979,6 +992,7 @@ function promptFamilyRoundMember_(family){
       holder.appendChild(row);
     });
     document.getElementById('cancelFamilyRoundBtn').onclick = () => {
+      familyPickerOpen_ = false;
       area.innerHTML = '';
       resolve(false);
     };
