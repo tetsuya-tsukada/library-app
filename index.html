@@ -535,9 +535,20 @@ function showScreen(name){
 
 async function init(){
   updateWhoBadge();
-  await loadRemoteConfig();
-  if(!USER){ applyAdminUI(false); showScreen('identify'); return; }
-  await refreshUserMatch();
+  if(!USER){
+    // showScreen('identify') needs CONFIG.patronLoginEnabled already
+    // loaded to decide whether to redirect to admin-login, so this one
+    // has to finish first.
+    await loadRemoteConfig();
+    applyAdminUI(false);
+    showScreen('identify');
+    return;
+  }
+  // Config and the signed-in user's admin/roster re-check don't depend
+  // on each other's result — running them together instead of one after
+  // another roughly halves the wait on login for a slow connection to
+  // the Apps Script backend.
+  await Promise.all([loadRemoteConfig(), refreshUserMatch()]);
   showScreen('scan');
 }
 
@@ -570,7 +581,9 @@ function buildUserFromCandidate_(query, candidate){
   return {
     mode: 'roster', matchType: 'parent', loginQuery: query,
     name: candidate.name, contact: candidate.name,
-    children: candidate.children, isAdmin: false
+    children: candidate.children,
+    guardians: (candidate.guardians && candidate.guardians.length) ? candidate.guardians : [candidate.name],
+    isAdmin: false
   };
 }
 
@@ -944,8 +957,13 @@ function promptFamilyRoundMember_(family){
     const area = document.getElementById('resultArea');
     area.innerHTML = '<p class="section-sub" style="text-align:center;">Checking borrow limits…</p>';
     const max = CONFIG.maxBorrowItems || 4;
+    // Every guardian sharing this family's children gets their own
+    // option here (see searchUsers in Code.gs) — not just whichever
+    // parent name was originally searched/clicked, so both parents of a
+    // two-parent child are selectable.
+    const guardians = (family.guardians && family.guardians.length) ? family.guardians : [family.name];
     const options = family.children.map(c => ({ name: c.name, label: c.name + (c.class ? ' ('+c.class+')' : ''), contact: contactOf_(c) }))
-      .concat([{ name: family.name + ' (Parent)', label: family.name + ' (Parent)', contact: family.name, isSelf: true }]);
+      .concat(guardians.map(g => ({ name: g + ' (Parent)', label: g + ' (Parent)', contact: g, isSelf: true })));
     let serverCounts = {};
     try{
       const res = await fetch(apiUrl_('myLoans', { names: options.map(o => o.name).join(',') }));
@@ -1143,13 +1161,19 @@ function renderGroupAssignPrompt_(){
     btn.onclick = () => assignUnassignedBorrows_(child.name, contactOf_(child));
     holder.appendChild(btn);
   });
-  const selfBtn = document.createElement('button');
-  selfBtn.className = 'btn btn-primary';
-  selfBtn.textContent = 'Use ' + family.name + ' (Parent)';
-  // Tagged "(Parent)" so this can never collide with a child of the same
-  // name for the per-name borrow limit, and reads clearly in the Sheet.
-  selfBtn.onclick = () => assignUnassignedBorrows_(family.name + ' (Parent)', family.name);
-  holder.appendChild(selfBtn);
+  // Every guardian sharing this family's children gets their own button
+  // (see searchUsers in Code.gs) — not just whichever parent name was
+  // originally searched/signed in with.
+  const guardians = (family.guardians && family.guardians.length) ? family.guardians : [family.name];
+  guardians.forEach(g=>{
+    const selfBtn = document.createElement('button');
+    selfBtn.className = 'btn btn-primary';
+    selfBtn.textContent = 'Use ' + g + ' (Parent)';
+    // Tagged "(Parent)" so this can never collide with a child of the same
+    // name for the per-name borrow limit, and reads clearly in the Sheet.
+    selfBtn.onclick = () => assignUnassignedBorrows_(g + ' (Parent)', g);
+    holder.appendChild(selfBtn);
+  });
 }
 
 function assignUnassignedBorrows_(name, contact){
@@ -1310,7 +1334,10 @@ function escapeHtml(s){ const d=document.createElement('div'); d.textContent=s; 
 function myBooksNames_(){
   if(!USER) return [];
   const family = currentFamily_();
-  if(family) return [family.name+' (Parent)'].concat(family.children.map(c=>c.name));
+  if(family){
+    const guardians = (family.guardians && family.guardians.length) ? family.guardians : [family.name];
+    return guardians.map(g=>g+' (Parent)').concat(family.children.map(c=>c.name));
+  }
   // An admin isn't on the User List themselves — once they've picked a
   // patron to scan for (ACTING_AS), show that person's own current
   // borrows/pending instead of nothing.
@@ -1714,7 +1741,11 @@ function actAsUser(user){
 // currentFamily_/renderGroupAssignPrompt_). Lets an admin scan a mixed
 // batch for several kids (or the parent) without re-picking mid-round.
 async function actAsFamily_(candidate){
-  ACTING_AS = { name: candidate.name, contact: candidate.name, children: candidate.children };
+  // guardians covers every parent sharing this family's children (see
+  // searchUsers in Code.gs) — falls back to just the searched/clicked
+  // name if the sheet hasn't been redeployed with that field yet.
+  const guardians = (candidate.guardians && candidate.guardians.length) ? candidate.guardians : [candidate.name];
+  ACTING_AS = { name: candidate.name, contact: candidate.name, children: candidate.children, guardians };
   familyRoundMember_ = null;
   resetScanResult_();
   showScreen('scan');
