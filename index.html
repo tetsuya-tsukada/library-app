@@ -966,21 +966,18 @@ async function stopScanningSession(){
   // scanQueue/unassignedBorrows, undercounting either one.
   await waitForScansToSettle_();
   updateScanIdentityBanner();
-  if(currentFamily_()){
-    // A family session (a real parent USER, or an admin acting as one)
-    // batches the "who's borrowing" decision to once per round (see
-    // renderGroupAssignPrompt_) and, after that, offers a choice to scan
-    // another round (e.g. for a different child, or themself) before
-    // finally reviewing everything together.
-    if(unassignedBorrows.length){
-      renderGroupAssignPrompt_();
-    } else if(scanQueue.length){
-      renderScanMoreOrReview_();
-    } else {
-      document.getElementById('resultArea').innerHTML = '';
-    }
+  if(unassignedBorrows.length){
+    // Only ever populated by a real parent USER session, which batches
+    // the "who's borrowing" decision to once per round instead of
+    // asking per book.
+    renderGroupAssignPrompt_();
   } else if(scanQueue.length){
-    renderQueueConfirmation();
+    // Offer another round before reviewing — for a family session (so a
+    // different child, or the parent, can be picked next) and equally
+    // for a single patron, so realizing you missed a book doesn't mean
+    // either committing early or losing the queue via Cancel just to
+    // scan one more.
+    renderScanMoreOrReview_();
   } else {
     document.getElementById('resultArea').innerHTML = '';
   }
