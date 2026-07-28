@@ -265,12 +265,14 @@
         <div class="scan-toast" id="scanToast"></div>
       </div>
       <!-- Where the family "who's borrowing this round?" picker (and the
-           post-scan confirmation/results) render — kept above My Books so
-           it's never scrolled past the current-borrows list below it. -->
+           post-scan confirmation/results) render. -->
       <div id="resultArea"></div>
-      <div id="myBooksSummary"></div>
       <p class="section-sub" id="scanNote" style="text-align:center;color:var(--gold);"></p>
+      <!-- What's just been scanned this round, then what's already
+           on loan overall — in that order, so the freshest info reads
+           first and My Books doesn't bury it further down the screen. -->
       <div id="scanQueueList"></div>
+      <div id="myBooksSummary"></div>
     </section>
 
     <!-- RETURN (admin only) — a dedicated return-only scanning flow, since
@@ -886,40 +888,53 @@ function promptFamilyRoundMember_(family){
     area.innerHTML = '<p class="section-sub" style="text-align:center;">Checking borrow limits…</p>';
     const max = CONFIG.maxBorrowItems || 4;
     const options = family.children.map(c => ({ name: c.name, label: c.name + (c.class ? ' ('+c.class+')' : ''), contact: contactOf_(c) }))
-      .concat([{ name: family.name + ' (Parent)', label: 'Use '+family.name+' (Parent)', contact: family.name, isSelf: true }]);
-    let counts = {};
+      .concat([{ name: family.name + ' (Parent)', label: family.name + ' (Parent)', contact: family.name, isSelf: true }]);
+    let serverCounts = {};
     try{
       const res = await fetch(apiUrl_('myLoans', { names: options.map(o => o.name).join(',') }));
       const data = await res.json();
       const all = (data.loans || []).concat(data.pending || []);
       options.forEach(o => {
-        counts[o.name] = all.filter(x => String(x.borrowerName || '').trim().toLowerCase() === o.name.trim().toLowerCase()).length;
+        serverCounts[o.name] = all.filter(x => String(x.borrowerName || '').trim().toLowerCase() === o.name.trim().toLowerCase()).length;
       });
     }catch(e){ /* couldn't check — show the picker anyway rather than block on a network hiccup */ }
+    // Same book-row list style as the "Find patron" picker, rather than a
+    // standalone stamp-card of stacked buttons — one consistent look for
+    // "pick a person" across the app.
     area.innerHTML = `
-      <div class="stamp-card">
-        <div class="eyebrow">Who's borrowing this round?</div>
-        <h2>${escapeHtml(family.name)}'s family</h2>
-        <div id="familyRoundButtons" style="margin-top:14px;display:flex;flex-direction:column;gap:8px;"></div>
-        <button class="btn btn-outline" style="margin-top:10px;" id="cancelFamilyRoundBtn">Cancel</button>
-      </div>`;
+      <h3 class="section-title">Who's borrowing this round?</h3>
+      <p class="section-sub">${escapeHtml(family.name)}'s family</p>
+      <div id="familyRoundButtons"></div>
+      <button class="btn btn-outline" style="margin-top:14px;" id="cancelFamilyRoundBtn">Cancel</button>`;
     const holder = document.getElementById('familyRoundButtons');
     options.forEach(o=>{
-      const count = counts[o.name] || 0;
+      const serverCount = serverCounts[o.name] || 0;
+      // Books scanned for them earlier this session (queued but not yet
+      // committed to the sheet — e.g. from an earlier round via "Scan
+      // more") count too, so this reflects their real current total
+      // rather than a stale server-only snapshot. The stored activeCount
+      // stays server-only, though: lookupAndQueueScan_ re-adds the live
+      // queue count on every scan, so combining both here would double-count.
+      const queuedCount = scanQueue.filter(q => q.action === 'borrow' && q.name === o.name).length;
+      const count = serverCount + queuedCount;
       const atLimit = count >= max;
-      const btn = document.createElement('button');
-      btn.className = o.isSelf ? 'btn btn-primary' : 'btn btn-outline';
-      btn.disabled = atLimit;
-      btn.textContent = (o.isSelf ? o.label : o.label) + ' — ' + count + '/' + max + (atLimit ? ' (limit reached)' : '');
+      const row = document.createElement('div');
+      row.className = 'book-row';
+      row.innerHTML = `
+        <div class="meta">
+          <div class="title">${escapeHtml(o.label)}</div>
+          <div class="sub">${count}/${max}${atLimit ? ' · limit reached' : ''}</div>
+        </div>
+        <button class="btn ${o.isSelf ? 'btn-primary' : 'btn-outline'} btn-sm" ${atLimit ? 'disabled' : ''}>${atLimit ? 'Limit reached' : 'Select'}</button>`;
       if(!atLimit){
-        btn.onclick = () => {
-          familyRoundMember_ = { name: o.name, contact: o.contact, activeCount: count };
+        row.querySelector('button').onclick = () => {
+          familyRoundMember_ = { name: o.name, contact: o.contact, activeCount: serverCount };
           area.innerHTML = '';
           updateScanIdentityBanner();
           resolve(true);
         };
       }
-      holder.appendChild(btn);
+      holder.appendChild(row);
     });
     document.getElementById('cancelFamilyRoundBtn').onclick = () => {
       area.innerHTML = '';
