@@ -307,18 +307,32 @@
       <button class="btn btn-outline" id="toggleAddBookBtn" onclick="toggleAddBookForm()">Add books</button>
       <div id="addBookForm" style="display:none;margin-top:16px;">
         <div class="field">
-          <label>Scan cover with camera (optional)</label>
-          <input type="file" accept="image/*" capture="environment" id="coverPhoto" onchange="scanCoverPhoto(event)">
-          <p class="section-sub" id="ocrStatus" style="margin:6px 0 0;"></p>
-        </div>
-        <div class="field">
           <label>Title</label>
-          <input type="text" id="newTitle" placeholder="Book title">
+          <div style="display:flex;gap:8px;">
+            <input type="text" id="newTitle" placeholder="Book title" style="flex:1;margin-bottom:0;">
+            <button type="button" class="btn btn-outline btn-sm" onclick="startCoverScan('title')">Scan</button>
+          </div>
         </div>
         <div class="field">
           <label>Author</label>
-          <input type="text" id="newAuthor" placeholder="Author (optional)">
+          <div style="display:flex;gap:8px;">
+            <input type="text" id="newAuthor" placeholder="Author (optional)" style="flex:1;margin-bottom:0;">
+            <button type="button" class="btn btn-outline btn-sm" onclick="startCoverScan('author')">Scan</button>
+          </div>
         </div>
+        <!-- Live camera preview for the title/author cover scan above —
+             one shared reader, shown for whichever field's Scan button
+             was tapped (see startCoverScan/coverScanTarget_). A single
+             photo rarely frames both the title and author cleanly, so
+             each is its own scan aimed at just that part of the cover. -->
+        <div id="coverReaderWrap" style="display:none;margin-bottom:18px;">
+          <video id="coverVideo" autoplay playsinline muted style="width:100%;border-radius:8px;border:1px solid var(--line);"></video>
+          <div style="display:flex;gap:8px;margin-top:10px;">
+            <button type="button" class="btn btn-primary" style="flex:1;" onclick="captureCoverFrame()">Capture</button>
+            <button type="button" class="btn btn-outline" style="flex:1;" onclick="stopCoverScan()">Cancel</button>
+          </div>
+        </div>
+        <p class="section-sub" id="ocrStatus" style="margin:0 0 12px;"></p>
         <button class="btn btn-primary" onclick="addBook()">Add & generate label</button>
         <div id="newLabelArea"></div>
       </div>
@@ -542,6 +556,7 @@ function showScreen(name){
     // that addBook() just rendered inside this same form.
     const form = document.getElementById('addBookForm'); if(form) form.style.display = 'none';
     const btn = document.getElementById('toggleAddBookBtn'); if(btn) btn.textContent = 'Add books';
+    stopCoverScan();
     loadShelf();
   }
   if(name==='approvals') loadApprovals();
@@ -1656,6 +1671,7 @@ function toggleAddBookForm(){
   const open = form.style.display !== 'none';
   form.style.display = open ? 'none' : 'block';
   btn.textContent = open ? 'Add books' : 'Cancel';
+  if(open) stopCoverScan(); // closing the form with the cover camera still open — release it rather than leave it running hidden
 }
 
 async function loadShelf(){
@@ -1961,39 +1977,79 @@ function loadTesseract(){
   });
 }
 
-async function scanCoverPhoto(evt){
-  const file = evt.target.files && evt.target.files[0];
-  if(!file) return;
+let coverScanTarget_ = null; // 'title' | 'author' — which field the open camera preview is scanning for
+let coverScanStream_ = null; // MediaStream to stop once done, so the camera light actually turns off
+
+// A live preview (framed by the user) rather than handing off to the
+// phone's native camera app for a single blind shot — same idea as the
+// QR scanner elsewhere in the app. One photo rarely frames both the
+// title and author cleanly, so this is opened per-field (see the two
+// Scan buttons) and only ever fills the one field it was opened for.
+async function startCoverScan(target){
+  coverScanTarget_ = target;
+  const wrap = document.getElementById('coverReaderWrap');
+  const video = document.getElementById('coverVideo');
+  const statusEl = document.getElementById('ocrStatus');
+  statusEl.textContent = '';
+  wrap.style.display = 'block';
+  try{
+    coverScanStream_ = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    video.srcObject = coverScanStream_;
+    await video.play();
+  }catch(e){
+    statusEl.textContent = 'Camera access failed: ' + e;
+    wrap.style.display = 'none';
+    coverScanTarget_ = null;
+  }
+}
+
+function stopCoverScan(){
+  document.getElementById('coverReaderWrap').style.display = 'none';
+  if(coverScanStream_){
+    coverScanStream_.getTracks().forEach(t => t.stop());
+    coverScanStream_ = null;
+  }
+  coverScanTarget_ = null;
+}
+
+async function captureCoverFrame(){
+  const target = coverScanTarget_;
+  const video = document.getElementById('coverVideo');
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+  stopCoverScan(); // release the camera before the OCR pass, which can take a few seconds
   const statusEl = document.getElementById('ocrStatus');
   statusEl.textContent = 'Loading text scanner (first use downloads language data)…';
   try{
     const Tesseract = await loadTesseract();
-    statusEl.textContent = 'Reading cover…';
-    const { data } = await Tesseract.recognize(file, 'jpn+eng');
-    const guess = guessTitleAuthor_(data);
-    if(guess.title) document.getElementById('newTitle').value = guess.title;
-    if(guess.author) document.getElementById('newAuthor').value = guess.author;
-    statusEl.textContent = guess.title
-      ? 'Filled in from the photo — please double-check before adding.'
-      : 'Could not confidently read the cover — fill in manually. (Vertical Japanese text is not supported yet — horizontal text reads best.)';
+    statusEl.textContent = 'Reading ' + target + '…';
+    const { data } = await Tesseract.recognize(canvas, 'jpn+eng');
+    const guess = guessCoverLine_(data);
+    if(guess){
+      document.getElementById(target === 'title' ? 'newTitle' : 'newAuthor').value = guess;
+      statusEl.textContent = 'Filled in from the photo — please double-check before adding.';
+    } else {
+      statusEl.textContent = 'Could not confidently read the ' + target + ' — fill in manually. (Vertical Japanese text is not supported yet — horizontal text reads best.)';
+    }
   }catch(e){
     console.warn('OCR failed', e);
     statusEl.textContent = 'Could not read the photo — fill in manually.';
   }
 }
 
-// Rough heuristic only: the tallest confidently-read line on a book cover is
-// usually the title, so this is a fill-assist, not a reliable auto-fill —
-// always meant to be reviewed before adding the book.
-function guessTitleAuthor_(ocrData){
+// Rough heuristic only: the tallest confidently-read line in the framed
+// shot is taken as the answer — since the scan is already aimed at just
+// the title or just the author, there's no need to guess which of
+// several lines is which, unlike a single combined cover photo.
+function guessCoverLine_(ocrData){
   const lines = (ocrData.lines || [])
     .map(l => ({ text: (l.text||'').trim(), height: l.bbox ? (l.bbox.y1 - l.bbox.y0) : 0, confidence: l.confidence||0 }))
     .filter(l => l.text.length > 0 && l.confidence > 40); // CJK titles can be a single short line
-  if(!lines.length) return { title:'', author:'' };
+  if(!lines.length) return '';
   lines.sort((a,b) => b.height - a.height);
-  const title = lines[0].text;
-  const authorLine = lines.find(l => l.text !== title);
-  return { title, author: authorLine ? authorLine.text : '' };
+  return lines[0].text;
 }
 
 function renderLabel(itemId, title){
