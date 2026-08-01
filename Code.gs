@@ -42,7 +42,15 @@
  *    constant (there's no in-app Settings screen; the URL is hardcoded).
  * 12. Add your books: run addBook manually a few times, OR just type
  *    rows directly into the Books tab (ItemID / Title / Author),
- *    leave Status blank — the app treats blank Status as Available.
+ *    leave Status blank — the app treats blank Status as Available. The
+ *    Group column (right after Author) is optional and not something
+ *    the app's own "Add books" form ever asks for — it's meant to be
+ *    filled in (or bulk-edited) directly in the Sheet, from the
+ *    dropdown described in step 13's BookGroups row, purely so an admin
+ *    can see borrowing trends by category later (Shelf tab in the app
+ *    can filter by it). If you have an existing Books tab from before
+ *    this column existed, run `migrateBooksAddGroupColumn_` once first
+ *    — see that function's comment.
  * 13. Run `setupConfigSheet` once. This creates a Config tab (Key/Value
  *    columns) pre-filled with a LoanDays row (default 14), a
  *    MaxBorrowItems row (default 4), an AdminSecret row (default
@@ -51,18 +59,23 @@
  *    change this immediately too, see "HOW SITE ACCESS WORKS" below), a
  *    SiteAccessTTLHours row (default 24), a SiteUrl row (your GitHub
  *    Pages URL, e.g. https://youruser.github.io/library-app/ — update
- *    it if you ever move the app to a different URL), and a
+ *    it if you ever move the app to a different URL), a
  *    PatronLoginEnabled row (default TRUE — set to FALSE to hide the
  *    patron sign-in search box from the landing page entirely, leaving
  *    only Admin login, for a rollout where only admins use the app at
  *    first; this is a UI-level toggle only, not a security boundary,
- *    same as the rest of the app's client-side role gating). Edit any
- *    of these any time — the app reads this tab on every load, so
- *    there's no code change or redeploy needed to update them. Changing
- *    LoanDays changes the default due date for future approvals only,
- *    not books already borrowed. Changing MaxBorrowItems changes how
- *    many books someone can have Borrowed or Pending at once before new
- *    borrow requests are rejected.
+ *    same as the rest of the app's client-side role gating), and a
+ *    BookGroups row (default "Fiction, Non-fiction, Picture Books,
+ *    Reference" — a comma-separated list that becomes both the Books
+ *    tab's Group column dropdown and the app's Shelf-tab Group filter;
+ *    edit it any time, then run the 📚 Library menu's "Refresh book
+ *    Group dropdown" item to update the Sheet-side dropdown to match).
+ *    Edit any of these any time — the app reads this tab on every load,
+ *    so there's no code change or redeploy needed to update them.
+ *    Changing LoanDays changes the default due date for future
+ *    approvals only, not books already borrowed. Changing
+ *    MaxBorrowItems changes how many books someone can have Borrowed or
+ *    Pending at once before new borrow requests are rejected.
  * 14. Reload the Google Sheet tab in your browser. A "📚 Library" menu
  *    appears next to Help — use its "Print QR labels" item any time to
  *    generate a printable label sheet (title, item ID, and a scannable
@@ -205,7 +218,14 @@ const LOAN_DAYS = 14;
 const MAX_BORROW_ITEMS = 4;
 const SITE_ACCESS_TTL_HOURS = 24;
 const APPROVAL_DECISION_COL = 7; // Approvals sheet: column G
-const BORROW_COUNT_COL = 9; // Books sheet: column I
+// Books sheet column layout: ItemID, Title, Author, Group, Status,
+// BorrowerName, BorrowerContact, BorrowDate, DueDate, BorrowCount.
+// Group sits right after Author (see migrateBooksAddGroupColumn_ for
+// sheets created before this column existed) — every column from
+// Status onward is one index later than it used to be, so this
+// constant (and every data[row][n] / getRange(row, n, ...) reference
+// to those columns throughout this file) accounts for that shift.
+const BORROW_COUNT_COL = 10; // Books sheet: column J
 
 function getSS() {
   return SHEET_ID ? SpreadsheetApp.openById(SHEET_ID) : SpreadsheetApp.getActiveSpreadsheet();
@@ -216,13 +236,25 @@ function setupSheets() {
   let books = ss.getSheetByName(BOOKS_SHEET);
   if (!books) {
     books = ss.insertSheet(BOOKS_SHEET);
-    books.appendRow(['ItemID', 'Title', 'Author', 'Status', 'BorrowerName', 'BorrowerContact', 'BorrowDate', 'DueDate', 'BorrowCount']);
+    books.appendRow(['ItemID', 'Title', 'Author', 'Group', 'Status', 'BorrowerName', 'BorrowerContact', 'BorrowDate', 'DueDate', 'BorrowCount']);
     books.setFrozenRows(1);
-  } else if (String(books.getRange(1, BORROW_COUNT_COL).getValue()).trim() !== 'BorrowCount') {
-    // Existing tab from before BorrowCount existed — add the header
-    // without touching any existing rows or their data (existing rows'
-    // counts just start at blank/0 going forward).
-    books.getRange(1, BORROW_COUNT_COL).setValue('BorrowCount');
+    applyBookGroupValidation_(books);
+  } else {
+    const header = books.getRange(1, 1, 1, 4).getValues()[0];
+    if (String(header[3]).trim() !== 'Group') {
+      // Existing tab from before the Group column existed — this needs
+      // the one-time migrateBooksAddGroupColumn_ (inserting a column
+      // shifts every row's existing data, which isn't something to do
+      // as a side effect of a generic "make sure the tabs exist" call).
+      // Leave BorrowCount's header alone too: on an unmigrated sheet it's
+      // still one column to the left of BORROW_COUNT_COL, so "fixing" it
+      // at today's column constant would just mislabel the wrong cell.
+    } else if (String(books.getRange(1, BORROW_COUNT_COL).getValue()).trim() !== 'BorrowCount') {
+      // Existing tab from before BorrowCount existed — add the header
+      // without touching any existing rows or their data (existing rows'
+      // counts just start at blank/0 going forward).
+      books.getRange(1, BORROW_COUNT_COL).setValue('BorrowCount');
+    }
   }
 
   let tx = ss.getSheetByName(TX_SHEET);
@@ -261,6 +293,69 @@ function setupSheets() {
     users.appendRow(['Class', 'Name', 'Parent1', 'Parent2']);
     users.setFrozenRows(1);
   }
+}
+
+// Reads the Config tab's BookGroups row (a comma-separated list, e.g.
+// "Fiction, Non-fiction, Picture Books") into an array of trimmed,
+// non-empty group names — the one canonical list behind both the Books
+// sheet's Group dropdown (applyBookGroupValidation_) and the web app's
+// Group filter (getPublicConfig). Edit that Config row any time; re-run
+// "Refresh book Group dropdown" from the 📚 Library menu afterward to
+// update the Sheet-side dropdown to match (the app's filter picks up
+// the new list on its next load, no menu action needed there).
+function getBookGroups_() {
+  const cfg = getConfig();
+  return String(cfg.BookGroups || '')
+    .split(',')
+    .map(function (g) { return g.trim(); })
+    .filter(Boolean);
+}
+
+// Applies (or refreshes) the Group column's dropdown so admins editing
+// the Sheet directly get a consistent list instead of free text. Blank
+// stays a valid choice (an uncategorized book), and an already-set
+// value that's since been removed from the Config list is left alone —
+// this only changes what NEW entries are offered/accepted going forward.
+function applyBookGroupValidation_(sh) {
+  const groups = getBookGroups_();
+  const range = sh.getRange(2, 4, Math.max(sh.getMaxRows() - 1, 1), 1);
+  if (!groups.length) { range.clearDataValidations(); return; }
+  const rule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(groups, true)
+    .setAllowInvalid(false)
+    .build();
+  range.setDataValidation(rule);
+}
+
+// Wired to the 📚 Library menu's "Refresh book Group dropdown" item —
+// run this after editing the Config tab's BookGroups row so the Sheet's
+// dropdown picks up the change without needing the bigger migration
+// function again.
+function refreshBookGroupDropdown() {
+  const sh = getSS().getSheetByName(BOOKS_SHEET);
+  if (!sh) return;
+  applyBookGroupValidation_(sh);
+}
+
+/**
+ * One-time migration for a Books tab created before the Group column
+ * existed (see BORROW_COUNT_COL's comment for the current column
+ * layout). Inserts a new column right after Author — Sheets shifts
+ * every existing row's Status-onward data over by one automatically,
+ * the same as if you'd inserted it by hand — sets its header to
+ * "Group", and applies the dropdown described in
+ * applyBookGroupValidation_. Safe to run more than once: does nothing
+ * if the sheet already has a Group column in that position.
+ */
+function migrateBooksAddGroupColumn_() {
+  const ss = getSS();
+  const sh = ss.getSheetByName(BOOKS_SHEET);
+  if (!sh) { setupSheets(); return; }
+  const header = sh.getRange(1, 1, 1, 4).getValues()[0];
+  if (String(header[3]).trim() === 'Group') return; // already migrated
+  sh.insertColumnAfter(3);
+  sh.getRange(1, 4).setValue('Group');
+  applyBookGroupValidation_(sh);
 }
 
 /**
@@ -338,7 +433,8 @@ function setupConfigSheet() {
     SiteAccessCode: 'changeme-site-code',
     SiteAccessTTLHours: String(SITE_ACCESS_TTL_HOURS),
     SiteUrl: 'https://tetsuya-tsukada.github.io/library-app/',
-    PatronLoginEnabled: 'TRUE'
+    PatronLoginEnabled: 'TRUE',
+    BookGroups: 'Fiction, Non-fiction, Picture Books, Reference'
   };
   Object.keys(defaults).forEach(key => {
     if (!existingKeys[key]) sh.appendRow([key, defaults[key]]);
@@ -421,7 +517,7 @@ function verifySiteCode(code) {
 // ever hand back this filtered subset instead.
 function getPublicConfig() {
   const cfg = getConfig();
-  return { LoanDays: cfg.LoanDays, MaxBorrowItems: cfg.MaxBorrowItems, PatronLoginEnabled: cfg.PatronLoginEnabled };
+  return { LoanDays: cfg.LoanDays, MaxBorrowItems: cfg.MaxBorrowItems, PatronLoginEnabled: cfg.PatronLoginEnabled, BookGroups: cfg.BookGroups || '' };
 }
 
 function getConfig() {
@@ -459,6 +555,7 @@ function onOpen(e) {
     .addItem('Print QR labels', 'openPrintLabelsDialog')
     .addItem('Print site access QR code', 'openSiteAccessQrDialog')
     .addItem('Regenerate site access code', 'regenerateSiteAccessCode')
+    .addItem('Refresh book Group dropdown', 'refreshBookGroupDropdown')
     .addToUi();
 }
 
@@ -734,6 +831,18 @@ function doGet(e) {
 function getBooksSheet_() {
   const sh = getSS().getSheetByName(BOOKS_SHEET);
   const data = sh.getDataRange().getValues();
+  // Guards against this version of the code running against a sheet that
+  // hasn't had the one-time Group column migration yet (see
+  // migrateBooksAddGroupColumn_). Every column from Status onward moved
+  // over by one when Group was inserted — every row read/write below
+  // assumes that new layout, so hitting an unmigrated sheet would
+  // silently corrupt Status/BorrowerName/etc. on the very next scan
+  // instead of failing loudly like this. Only fires on a sheet that
+  // actually looks like real book data (a header row plus at least one
+  // more row) — an empty/uninitialized sheet is left to setupSheets.
+  if (data.length > 1 && String(data[0][0]).trim() === 'ItemID' && String(data[0][3]).trim() !== 'Group') {
+    throw new Error('Books sheet needs a one-time migration before this deployment can be used — run migrateBooksAddGroupColumn_ once from the Apps Script editor (select it in the function dropdown, click Run), then try again.');
+  }
   return { sh, data, header: data[0] };
 }
 
@@ -749,7 +858,7 @@ function lookupBook(itemId) {
   const { data } = getBooksSheet_();
   const row = findRow_(data, itemId);
   if (row === -1) return { error: 'Book not found', itemId };
-  const [id, title, author, status, name, contact, borrowDate, dueDate] = data[row];
+  const [id, title, author, , status, name, contact, borrowDate, dueDate] = data[row]; // 4th slot (Group) intentionally unused here — not needed during scanning
   return {
     itemId: id, title, author,
     status: status || 'Available',
@@ -770,7 +879,7 @@ function scanBook(itemId, name, contact, adminEmail) {
   if (row === -1) return { error: 'Book not found', itemId };
 
   const title = data[row][1];
-  const currentStatus = data[row][3] || 'Available';
+  const currentStatus = data[row][4] || 'Available';
   const now = new Date();
   const rowNum = row + 1; // 1-indexed for sheet API
   const isAdminScan = !!adminEmail && isAdmin_(adminEmail);
@@ -786,13 +895,13 @@ function scanBook(itemId, name, contact, adminEmail) {
     }
     if (isAdminScan) {
       const due = new Date(now.getTime() + getLoanDays_() * 24 * 60 * 60 * 1000);
-      sh.getRange(rowNum, 4, 1, 5).setValues([['Borrowed', name, contact || '', now, due]]);
+      sh.getRange(rowNum, 5, 1, 5).setValues([['Borrowed', name, contact || '', now, due]]);
       logTx_(itemId, title, 'Borrow', name, contact);
       incrementBorrowCount_(sh, rowNum);
       return { action: 'borrow', itemId, title, borrowerName: name, dueDate: due };
     }
     const requestId = itemId + '-' + now.getTime();
-    sh.getRange(rowNum, 4, 1, 5).setValues([['Pending', name, contact || '', now, '']]);
+    sh.getRange(rowNum, 5, 1, 5).setValues([['Pending', name, contact || '', now, '']]);
     appendApprovalRequest_(requestId, itemId, title, name, contact);
     return { action: 'pending', itemId, title, requestId };
   } else if (currentStatus === 'Pending') {
@@ -801,9 +910,9 @@ function scanBook(itemId, name, contact, adminEmail) {
     return { action: 'pending', itemId, title, requestId };
   } else {
     // RETURN — always immediate, never needs approval
-    const prevName = data[row][4];
-    const prevContact = data[row][5];
-    sh.getRange(rowNum, 4, 1, 5).setValues([['Available', '', '', '', '']]);
+    const prevName = data[row][5];
+    const prevContact = data[row][6];
+    sh.getRange(rowNum, 5, 1, 5).setValues([['Available', '', '', '', '']]);
     logTx_(itemId, title, 'Return', prevName, prevContact);
     return { action: 'return', itemId, title, borrowerName: prevName };
   }
@@ -842,14 +951,14 @@ function scanBookBatch(itemsJson, adminEmail) {
   // whole batch, not just against the pre-batch snapshot.
   const activeCounts = {};
   for (let i = 1; i < data.length; i++) {
-    const status = data[i][3];
-    const bName = String(data[i][4] || '').trim().toLowerCase();
+    const status = data[i][4];
+    const bName = String(data[i][5] || '').trim().toLowerCase();
     if ((status === 'Borrowed' || status === 'Pending') && bName) {
       activeCounts[bName] = (activeCounts[bName] || 0) + 1;
     }
   }
 
-  const touchedRows = []; // indices into `data` whose columns D:I changed
+  const touchedRows = []; // indices into `data` whose columns E:J changed
   const txRows = [];
   const approvalRows = [];
   const results = [];
@@ -861,7 +970,7 @@ function scanBookBatch(itemsJson, adminEmail) {
     const row = findRow_(data, itemId);
     if (row === -1) { results.push({ itemId, error: 'Book not found' }); return; }
     const title = data[row][1];
-    const currentStatus = data[row][3] || 'Available';
+    const currentStatus = data[row][4] || 'Available';
 
     if (currentStatus === 'Available') {
       if (!name) { results.push({ itemId, title, error: 'Name required to borrow' }); return; }
@@ -874,16 +983,16 @@ function scanBookBatch(itemsJson, adminEmail) {
       activeCounts[key] = activeCount + 1;
       if (isAdminScan) {
         const due = new Date(now.getTime() + getLoanDays_() * 24 * 60 * 60 * 1000);
-        data[row][3] = 'Borrowed'; data[row][4] = name; data[row][5] = contact || '';
-        data[row][6] = now; data[row][7] = due;
-        data[row][8] = (parseInt(data[row][8], 10) || 0) + 1;
+        data[row][4] = 'Borrowed'; data[row][5] = name; data[row][6] = contact || '';
+        data[row][7] = now; data[row][8] = due;
+        data[row][9] = (parseInt(data[row][9], 10) || 0) + 1;
         touchedRows.push(row);
         txRows.push([now, itemId, title, 'Borrow', name, contact]);
         results.push({ action: 'borrow', itemId, title, borrowerName: name, dueDate: due });
       } else {
         const requestId = itemId + '-' + now.getTime() + '-' + Math.floor(Math.random() * 1000);
-        data[row][3] = 'Pending'; data[row][4] = name; data[row][5] = contact || '';
-        data[row][6] = now; data[row][7] = '';
+        data[row][4] = 'Pending'; data[row][5] = name; data[row][6] = contact || '';
+        data[row][7] = now; data[row][8] = '';
         touchedRows.push(row);
         approvalRows.push([requestId, now, itemId, title, name, contact || '', 'Pending', '', '', '']);
         results.push({ action: 'pending', itemId, title, requestId });
@@ -894,10 +1003,10 @@ function scanBookBatch(itemsJson, adminEmail) {
       results.push({ action: 'pending', itemId, title, requestId });
     } else {
       // RETURN — always immediate, never needs approval
-      const prevName = data[row][4];
-      const prevContact = data[row][5];
-      data[row][3] = 'Available'; data[row][4] = ''; data[row][5] = '';
-      data[row][6] = ''; data[row][7] = '';
+      const prevName = data[row][5];
+      const prevContact = data[row][6];
+      data[row][4] = 'Available'; data[row][5] = ''; data[row][6] = '';
+      data[row][7] = ''; data[row][8] = '';
       touchedRows.push(row);
       txRows.push([now, itemId, title, 'Return', prevName, prevContact]);
       results.push({ action: 'return', itemId, title, borrowerName: prevName });
@@ -914,9 +1023,9 @@ function scanBookBatch(itemsJson, adminEmail) {
     const values = [];
     for (let k = 0; k < count; k++) {
       const r = data[startRow + k];
-      values.push([r[3], r[4], r[5], r[6], r[7], r[8]]);
+      values.push([r[4], r[5], r[6], r[7], r[8], r[9]]);
     }
-    sh.getRange(startRow + 1, 4, count, 6).setValues(values); // columns D:I
+    sh.getRange(startRow + 1, 5, count, 6).setValues(values); // columns E:J
     i = j + 1;
   }
   if (txRows.length) {
@@ -944,8 +1053,8 @@ function countActiveLoans_(name) {
   const { data } = getBooksSheet_();
   let count = 0;
   for (let i = 1; i < data.length; i++) {
-    const status = data[i][3];
-    const bName = String(data[i][4] || '').trim().toLowerCase();
+    const status = data[i][4];
+    const bName = String(data[i][5] || '').trim().toLowerCase();
     if ((status === 'Borrowed' || status === 'Pending') && bName === target) count++;
   }
   return count;
@@ -1006,8 +1115,8 @@ function checkApproval(requestId) {
   if (decision === 'Approve') {
     const { data: books } = getBooksSheet_();
     const bRow = findRow_(books, itemId);
-    const borrowerName = bRow !== -1 ? books[bRow][4] : requesterName;
-    const dueDate = bRow !== -1 ? books[bRow][7] : null;
+    const borrowerName = bRow !== -1 ? books[bRow][5] : requesterName;
+    const dueDate = bRow !== -1 ? books[bRow][8] : null;
     return { status: 'approved', itemId, title, borrowerName, dueDate };
   }
   if (decision === 'Deny') {
@@ -1064,7 +1173,7 @@ function applyApprovalDecision_(sh, row, decision, adminEmail, overrideDueDate) 
 
   const { sh: booksSh, data: books } = getBooksSheet_();
   const bRow = findRow_(books, itemId);
-  const bookIsPending = bRow !== -1 && (books[bRow][3] || '') === 'Pending';
+  const bookIsPending = bRow !== -1 && (books[bRow][4] || '') === 'Pending';
 
   if (decision === 'Approve' && bookIsPending) {
     const now = new Date();
@@ -1079,11 +1188,11 @@ function applyApprovalDecision_(sh, row, decision, adminEmail, overrideDueDate) 
     }
     if (!due) due = new Date(now.getTime() + getLoanDays_() * 24 * 60 * 60 * 1000);
 
-    booksSh.getRange(bRow + 1, 4, 1, 5).setValues([['Borrowed', requesterName, requesterContact || '', now, due]]);
+    booksSh.getRange(bRow + 1, 5, 1, 5).setValues([['Borrowed', requesterName, requesterContact || '', now, due]]);
     logTx_(itemId, title, 'Borrow', requesterName, requesterContact);
     incrementBorrowCount_(booksSh, bRow + 1);
   } else if (decision === 'Deny' && bookIsPending) {
-    booksSh.getRange(bRow + 1, 4, 1, 5).setValues([['Available', '', '', '', '']]);
+    booksSh.getRange(bRow + 1, 5, 1, 5).setValues([['Available', '', '', '', '']]);
     logTx_(itemId, title, 'Deny', requesterName, requesterContact);
   }
 
@@ -1295,11 +1404,15 @@ function listBooks() {
   return { books: rows };
 }
 
+// Group is left blank here on purpose — the app's own "Add books" form
+// never asks for one (see the Group column's setup note at the top of
+// this file); admins fill it in later directly in the Sheet, from the
+// dropdown applyBookGroupValidation_ sets up.
 function addBook(itemId, title, author) {
   if (!itemId || !title) return { error: 'itemId and title required' };
   const { sh, data } = getBooksSheet_();
   if (findRow_(data, itemId) !== -1) return { error: 'itemId already exists' };
-  sh.appendRow([itemId, title, author || '', 'Available', '', '', '', '', 0]);
+  sh.appendRow([itemId, title, author || '', '', 'Available', '', '', '', '', 0]);
   return { ok: true, itemId, title };
 }
 
@@ -1309,12 +1422,12 @@ function myLoans(namesCsv) {
   const names = String(namesCsv || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
   if (!names.length) return { error: 'Missing name' };
   const { data } = getBooksSheet_();
-  const mine = data.slice(1).filter(r => names.indexOf(String(r[4]).trim().toLowerCase()) !== -1);
-  const loans = mine.filter(r => r[3] === 'Borrowed');
-  const pending = mine.filter(r => r[3] === 'Pending');
+  const mine = data.slice(1).filter(r => names.indexOf(String(r[5]).trim().toLowerCase()) !== -1);
+  const loans = mine.filter(r => r[4] === 'Borrowed');
+  const pending = mine.filter(r => r[4] === 'Pending');
   return {
-    loans: loans.map(r => ({ itemId: r[0], title: r[1], borrowerName: r[4], borrowDate: r[6], dueDate: r[7] })),
-    pending: pending.map(r => ({ itemId: r[0], title: r[1], borrowerName: r[4] }))
+    loans: loans.map(r => ({ itemId: r[0], title: r[1], borrowerName: r[5], borrowDate: r[7], dueDate: r[8] })),
+    pending: pending.map(r => ({ itemId: r[0], title: r[1], borrowerName: r[5] }))
   };
 }
 
@@ -1337,18 +1450,18 @@ function getSummary(adminEmail) {
 
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
-    if (row[3] !== 'Borrowed') continue;
-    const item = { itemId: row[0], title: row[1], borrowerName: row[4], dueDate: row[7] };
+    if (row[4] !== 'Borrowed') continue;
+    const item = { itemId: row[0], title: row[1], borrowerName: row[5], dueDate: row[8] };
     borrowed.push(item);
 
-    if (row[6]) {
-      const borrowDateStr = Utilities.formatDate(new Date(row[6]), tz, 'yyyy-MM-dd');
+    if (row[7]) {
+      const borrowDateStr = Utilities.formatDate(new Date(row[7]), tz, 'yyyy-MM-dd');
       if (borrowDateStr === todayStr) borrowedToday.push(item);
     }
-    if (row[7]) {
-      const dueDateStr = Utilities.formatDate(new Date(row[7]), tz, 'yyyy-MM-dd');
+    if (row[8]) {
+      const dueDateStr = Utilities.formatDate(new Date(row[8]), tz, 'yyyy-MM-dd');
       if (dueDateStr === todayStr) dueToday.push(item);
-      else if (new Date(row[7]) < new Date()) due.push(item);
+      else if (new Date(row[8]) < new Date()) due.push(item);
     }
   }
 
