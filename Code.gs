@@ -317,6 +317,14 @@ function getBookGroups_() {
 // value that's since been removed from the Config list is left alone —
 // this only changes what NEW entries are offered/accepted going forward.
 function applyBookGroupValidation_(sh) {
+  // Refuses to touch column D unless it's actually the Group column —
+  // without this, running this on a sheet that hasn't been migrated yet
+  // (see migrateBooksAddGroupColumn_) would slap this dropdown onto
+  // whatever column D currently is (Status, on an unmigrated sheet),
+  // which is exactly the mistake this check exists to catch.
+  if (String(sh.getRange(1, 4).getValue()).trim() !== 'Group') {
+    throw new Error('Column D is not "Group" yet — run migrateBooksAddGroupColumn_ once first (see its comment), then try again.');
+  }
   const groups = getBookGroups_();
   const range = sh.getRange(2, 4, Math.max(sh.getMaxRows() - 1, 1), 1);
   if (!groups.length) { range.clearDataValidations(); return; }
