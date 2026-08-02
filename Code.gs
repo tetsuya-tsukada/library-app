@@ -774,7 +774,10 @@ function doGet(e) {
     // WORKS" above. This runs before the switch below on purpose, so
     // adding a new case here can never accidentally skip the gate.
     if (action !== 'verifySiteCode' && !isValidSiteCode_(e.parameter.siteCode)) {
-      result = { error: 'Security code required — scan the QR code posted in the library room.' };
+      // siteAccessInvalid lets the frontend tell this specific case apart
+      // from any other error and force the device back to the gate
+      // screen, without depending on matching this exact message text.
+      result = { error: 'Security code required — scan the QR code posted in the library room.', siteAccessInvalid: true };
     } else {
       switch (action) {
         case 'lookup':
