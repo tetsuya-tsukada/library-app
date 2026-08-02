@@ -790,7 +790,7 @@ function doGet(e) {
           result = listBooks();
           break;
         case 'addBook':
-          result = addBook(e.parameter.itemId, e.parameter.title, e.parameter.author);
+          result = addBook(e.parameter.itemId, e.parameter.title, e.parameter.author, e.parameter.group);
           break;
         case 'myLoans':
           result = myLoans(e.parameter.names);
@@ -1412,15 +1412,11 @@ function listBooks() {
   return { books: rows };
 }
 
-// Group is left blank here on purpose — the app's own "Add books" form
-// never asks for one (see the Group column's setup note at the top of
-// this file); admins fill it in later directly in the Sheet, from the
-// dropdown applyBookGroupValidation_ sets up.
-function addBook(itemId, title, author) {
+function addBook(itemId, title, author, group) {
   if (!itemId || !title) return { error: 'itemId and title required' };
   const { sh, data } = getBooksSheet_();
   if (findRow_(data, itemId) !== -1) return { error: 'itemId already exists' };
-  sh.appendRow([itemId, title, author || '', '', 'Available', '', '', '', '', 0]);
+  sh.appendRow([itemId, title, author || '', group || '', 'Available', '', '', '', '', 0]);
   return { ok: true, itemId, title };
 }
 

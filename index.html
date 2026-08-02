@@ -7,7 +7,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
   :root{
     --ink:#1B2430;
@@ -143,12 +142,6 @@
   .status-pill.avail{background:rgba(63,102,89,0.25);color:#8fd6bd;}
   .status-pill.borrowed{background:rgba(178,65,47,0.25);color:#e8998a;}
   .status-pill.pending{background:rgba(201,162,39,0.25);color:var(--gold);}
-
-  .label-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px;}
-  .label{background:var(--paper);color:var(--ink);border-radius:4px;padding:10px;text-align:center;}
-  .label .qr{margin:0 auto 6px;width:100px;height:100px;}
-  .label .lt{font-size:11px;font-weight:600;line-height:1.2;margin-bottom:2px;}
-  .label .li{font-family:'JetBrains Mono',monospace;font-size:9px;opacity:0.6;}
 
   /* Top nav — sits right under the header, not pinned to the bottom,
      so the primary actions are immediately visible and reachable
@@ -336,6 +329,15 @@
             <button type="button" class="btn btn-outline btn-sm" data-i18n="scan_btn" onclick="startCoverScan('author')">Scan</button>
           </div>
         </div>
+        <!-- Options filled in by renderAddBookGroupOptions_ from
+             CONFIG.bookGroups, same list as the Shelf filter — hidden
+             entirely if no groups are configured. -->
+        <div class="field" id="newGroupField" style="display:none;">
+          <label data-i18n="shelf_group_filter_label">Group</label>
+          <select id="newGroup">
+            <option value="" data-i18n="shelf_no_group_option">No group</option>
+          </select>
+        </div>
         <!-- Live camera preview for the title/author cover scan above —
              one shared reader, shown for whichever field's Scan button
              was tapped (see startCoverScan/coverScanTarget_). A single
@@ -349,8 +351,12 @@
           </div>
         </div>
         <p class="section-sub" id="ocrStatus" style="margin:0 0 12px;"></p>
-        <button class="btn btn-primary" data-i18n="shelf_add_generate_btn" onclick="addBook()">Add & generate label</button>
-        <div id="newLabelArea"></div>
+        <button class="btn btn-primary" data-i18n="shelf_add_book_btn" onclick="addBook()">Add book</button>
+        <!-- Confirmation text after a successful add — no QR label here;
+             printable labels are still generated from the Sheet itself
+             (📚 Library menu → Print QR labels), just not inline in this
+             form anymore. -->
+        <p class="section-sub" id="addBookStatus" style="text-align:center;margin-top:10px;"></p>
       </div>
       <div class="divider"></div>
       <h3 class="section-title" style="font-size:15px;" data-i18n="shelf_all_books">All books</h3>
@@ -543,7 +549,9 @@ const I18N = {
     shelf_add_books_btn: 'Add books',
     shelf_title_placeholder: 'Book title',
     shelf_author_placeholder: 'Author (optional)',
-    shelf_add_generate_btn: 'Add & generate label',
+    shelf_add_book_btn: 'Add book',
+    shelf_no_group_option: 'No group',
+    shelf_book_added: 'Added "{title}".',
     shelf_all_books: 'All books',
     shelf_search_placeholder: 'Search by title, author, or borrower',
     shelf_filter_all: 'All books',
@@ -721,7 +729,9 @@ const I18N = {
     shelf_add_books_btn: '本を追加',
     shelf_title_placeholder: '本のタイトル',
     shelf_author_placeholder: '著者（任意）',
-    shelf_add_generate_btn: '追加してラベルを作成',
+    shelf_add_book_btn: '本を追加',
+    shelf_no_group_option: 'グループなし',
+    shelf_book_added: '「{title}」を追加しました。',
     shelf_all_books: 'すべての本',
     shelf_search_placeholder: 'タイトル・著者・借りている人で検索',
     shelf_filter_all: 'すべての本',
@@ -832,6 +842,7 @@ function refreshCurrentScreenDynamicText_(){
   else if(currentScreenName_ === 'shelf'){
     loadShelf();
     renderShelfGroupFilterOptions_();
+    renderAddBookGroupOptions_();
     const form = document.getElementById('addBookForm');
     const abtn = document.getElementById('toggleAddBookBtn');
     if(form && abtn) abtn.textContent = (form.style.display !== 'none') ? t('cancel_btn') : t('shelf_add_books_btn');
@@ -1251,16 +1262,16 @@ async function loadRemoteConfig(){
     // fails the regex below and defaults back to enabled, defeating the
     // whole toggle. ?? only substitutes on null/undefined, not false.
     CONFIG.patronLoginEnabled = !/^(false|0|no)$/i.test(String(data.PatronLoginEnabled ?? '').trim());
-    // The Books sheet's Group column itself isn't shown/edited in the
-    // app (see Code.gs) — this list only powers the Shelf tab's Group
-    // filter, so admins working from a phone can still narrow the shelf
-    // down by category even though categorizing happens in the Sheet.
+    // Source list for both the Shelf tab's Group filter and the Add Book
+    // form's Group dropdown — hidden in both places if no groups are
+    // configured in the Config tab.
     CONFIG.bookGroups = String(data.BookGroups || '').split(',').map(g => g.trim()).filter(Boolean);
   }catch(e){
     console.warn('Could not load config from the sheet', e);
   }
   applyPatronLoginVisibility_();
   renderShelfGroupFilterOptions_();
+  renderAddBookGroupOptions_();
 }
 
 // Lets a school roll this out admin-only at first: with
@@ -2186,6 +2197,19 @@ function renderShelfGroupFilterOptions_(){
   if(groups.includes(current)) select.value = current; // preserve the current pick across a re-render (e.g. a language switch), if it's still a valid option
 }
 
+function renderAddBookGroupOptions_(){
+  const field = document.getElementById('newGroupField');
+  const select = document.getElementById('newGroup');
+  if(!field || !select) return;
+  const groups = CONFIG.bookGroups || [];
+  if(!groups.length){ field.style.display = 'none'; return; }
+  field.style.display = '';
+  const current = select.value;
+  select.innerHTML = '<option value="">'+escapeHtml(t('shelf_no_group_option'))+'</option>' +
+    groups.map(g => '<option value="'+escapeHtml(g)+'">'+escapeHtml(g)+'</option>').join('');
+  if(groups.includes(current)) select.value = current;
+}
+
 function renderBookList(){
   const listEl = document.getElementById('bookList');
   const q = (document.getElementById('shelfSearch').value || '').trim().toLowerCase();
@@ -2442,17 +2466,18 @@ function nextItemId(){
 async function addBook(){
   const title = document.getElementById('newTitle').value.trim();
   const author = document.getElementById('newAuthor').value.trim();
+  const group = document.getElementById('newGroup').value;
   if(!title){ alert(t('shelf_enter_title')); return; }
   const itemId = nextItemId();
   try{
-    const url = apiUrl_('addBook', { itemId, title, author });
+    const url = apiUrl_('addBook', { itemId, title, author, group });
     const res = await fetch(url);
     const data = await res.json();
     if(data.error){ alert(data.error); return; }
     document.getElementById('newTitle').value='';
     document.getElementById('newAuthor').value='';
-    document.getElementById('newLabelArea').innerHTML = renderLabel(itemId, title);
-    renderQr('label-'+itemId, itemId);
+    document.getElementById('newGroup').value='';
+    document.getElementById('addBookStatus').textContent = t('shelf_book_added', { title });
     loadShelf();
   }catch(e){ alert(t('shelf_add_fail')); }
 }
@@ -2546,20 +2571,6 @@ function guessCoverLine_(ocrData){
   if(!lines.length) return '';
   lines.sort((a,b) => b.height - a.height);
   return lines[0].text;
-}
-
-function renderLabel(itemId, title){
-  return `<div class="label-grid"><div class="label">
-    <div class="qr" id="label-${itemId}"></div>
-    <div class="lt">${escapeHtml(title)}</div>
-    <div class="li">${escapeHtml(itemId)}</div>
-  </div></div>`;
-}
-function renderQr(elId, text){
-  setTimeout(()=>{
-    const el = document.getElementById(elId);
-    if(el && window.QRCode) new QRCode(el, { text, width:100, height:100, colorDark:'#1B2430', colorLight:'#F2E9D8' });
-  }, 50);
 }
 
 // A phone's ordinary camera app recognizes the site access QR as a URL
