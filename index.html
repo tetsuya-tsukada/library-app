@@ -903,6 +903,24 @@ function apiUrl_(action, params){
   }
   return url;
 }
+
+// Every ordinary API call (everything but verifySiteCode itself, which
+// doesn't need this) funnels through here so a code invalidated
+// server-side mid-session — see Code.gs's siteAccessInvalid flag — kicks
+// this device back to the gate right away, the same as a stale cached
+// code caught on a fresh page load in bootstrapSiteAccess_. Reloads
+// instead of swapping screens in place so it re-runs that exact same,
+// already-tested path rather than duplicating it here.
+async function apiFetch_(action, params){
+  const res = await fetch(apiUrl_(action, params));
+  const data = await res.json();
+  if(data && data.siteAccessInvalid){
+    clearSiteAccess_();
+    location.reload();
+    return new Promise(()=>{}); // page is reloading — never resolve so the caller can't act on this stale response
+  }
+  return data;
+}
 let html5QrCode = null;
 let scanning = false;
 let bookCache = [];
@@ -1154,8 +1172,7 @@ async function refreshUserMatch(){
   if(!USER) return;
   if(USER.matchType === 'admin'){
     try{
-      const res = await fetch(apiUrl_('verifyAdmin', { email: USER.contact }));
-      const data = await res.json();
+      const data = await apiFetch_('verifyAdmin', { email: USER.contact });
       USER.isAdmin = !!data.isAdmin;
       localStorage.setItem('stacks_user', JSON.stringify(USER));
     }catch(e){ /* offline — keep last-known state */ }
@@ -1164,8 +1181,7 @@ async function refreshUserMatch(){
   }
   if(!USER.loginQuery){ applyAdminUI(false); return; }
   try{
-    const res = await fetch(apiUrl_('searchUsers', { query: USER.loginQuery }));
-    const data = await res.json();
+    const data = await apiFetch_('searchUsers', { query: USER.loginQuery });
     const match = (data.candidates || []).find(c => c.type === USER.matchType && c.name === USER.name);
     if(match){
       USER = buildUserFromCandidate_(USER.loginQuery, match);
@@ -1182,8 +1198,7 @@ const onLoginSearchInput = debounce_(async function(){
   statusEl.textContent = '';
   if(query.length < 2){ holder.innerHTML = ''; return; }
   try{
-    const res = await fetch(apiUrl_('searchUsers', { query }));
-    const data = await res.json();
+    const data = await apiFetch_('searchUsers', { query });
     renderLoginCandidates(data.candidates || [], query);
   }catch(e){
     statusEl.textContent = t('identify_network_fail');
@@ -1216,9 +1231,7 @@ async function adminLogin(){
   errEl.textContent = '';
   if(!email || !secret){ errEl.textContent = t('admin_login_missing'); return; }
   try{
-    const url = apiUrl_('adminLogin', { email, secret });
-    const res = await fetch(url);
-    const data = await res.json();
+    const data = await apiFetch_('adminLogin', { email, secret });
     if(data.error){ errEl.textContent = data.error; return; }
     completeSignIn_({ mode:'admin', matchType:'admin', name: data.email, contact: data.email, isAdmin: true });
   }catch(e){
@@ -1254,8 +1267,7 @@ function updateApprovalsNavVisibility_(){
 
 async function loadRemoteConfig(){
   try{
-    const res = await fetch(apiUrl_('getConfig'));
-    const data = await res.json();
+    const data = await apiFetch_('getConfig');
     CONFIG.loanDays = parseInt(data.LoanDays, 10) || 14;
     CONFIG.maxBorrowItems = parseInt(data.MaxBorrowItems, 10) || 4;
     // Missing/blank defaults to enabled — only an explicit false/0/no
@@ -1516,8 +1528,7 @@ function promptFamilyRoundMember_(family){
       .concat(guardians.map(g => ({ name: g + ' (Parent)', label: g + ' (Parent)', contact: g, isSelf: true })));
     let serverCounts = {};
     try{
-      const res = await fetch(apiUrl_('myLoans', { names: options.map(o => o.name).join(',') }));
-      const data = await res.json();
+      const data = await apiFetch_('myLoans', { names: options.map(o => o.name).join(',') });
       const all = (data.loans || []).concat(data.pending || []);
       options.forEach(o => {
         serverCounts[o.name] = all.filter(x => String(x.borrowerName || '').trim().toLowerCase() === o.name.trim().toLowerCase()).length;
@@ -1575,8 +1586,7 @@ function promptFamilyRoundMember_(family){
 // patron signed in as themself) — see updateScanIdentityBanner.
 async function fetchBorrowCount_(name){
   try{
-    const res = await fetch(apiUrl_('myLoans', { names: name }));
-    const data = await res.json();
+    const data = await apiFetch_('myLoans', { names: name });
     return (data.loans || []).length + (data.pending || []).length;
   }catch(e){ return null; }
 }
@@ -1654,8 +1664,7 @@ function updateScanBtnProcessingState_(){
 
 async function lookupAndQueueScan_(itemId){
   try{
-    const res = await fetch(apiUrl_('lookup', { itemId }));
-    const data = await res.json();
+    const data = await apiFetch_('lookup', { itemId });
     if(data.error){ flashScanNote_(data.error+' ('+itemId+')'); return; }
     const status = data.status || 'Available';
     if(status === 'Pending'){ flashScanNote_(t('scan_awaiting_approval', { title: data.title })); return; }
@@ -1871,9 +1880,7 @@ async function commitScanQueue(){
 async function commitBatch_(queue, adminEmail){
   try{
     const items = queue.map(q => ({ itemId: q.itemId, name: q.name || '', contact: q.contact || '' }));
-    const url = apiUrl_('scanBatch', { items: JSON.stringify(items), adminEmail: adminEmail || undefined });
-    const res = await fetch(url);
-    const data = await res.json();
+    const data = await apiFetch_('scanBatch', { items: JSON.stringify(items), adminEmail: adminEmail || undefined });
     if(data.error) return queue.map(q => ({ q, data: { error: data.error } }));
     return queue.map((q, i) => ({ q, data: (data.results && data.results[i]) || { error: t('no_result_returned') } }));
   }catch(e){
@@ -1940,8 +1947,7 @@ async function refreshMyBooks(){
   // doesn't just look empty/broken while it's in flight.
   el.innerHTML = refreshRow + '<p class="section-sub" style="text-align:center;">'+escapeHtml(t('loading'))+'</p>';
   try{
-    const res = await fetch(apiUrl_('myLoans', { names: names.join(',') }));
-    const data = await res.json();
+    const data = await apiFetch_('myLoans', { names: names.join(',') });
     const loans = data.loans || [];
     const pending = data.pending || [];
     if(!loans.length && !pending.length){
@@ -2056,8 +2062,7 @@ function updateReturnBtnProcessingState_(){
 
 async function lookupAndQueueReturn_(itemId){
   try{
-    const res = await fetch(apiUrl_('lookup', { itemId }));
-    const data = await res.json();
+    const data = await apiFetch_('lookup', { itemId });
     if(data.error){ flashReturnNote_(data.error+' ('+itemId+')'); return; }
     const status = data.status || 'Available';
     if(status !== 'Borrowed'){
@@ -2166,8 +2171,7 @@ async function loadShelf(){
   const countEl = document.getElementById('shelfCount');
   countEl.textContent = t('loading');
   try{
-    const res = await fetch(apiUrl_('list'));
-    const data = await res.json();
+    const data = await apiFetch_('list');
     bookCache = data.books || [];
     const borrowed = bookCache.filter(b=>b.Status==='Borrowed').length;
     countEl.textContent = t('shelf_count', { n: bookCache.length, m: borrowed });
@@ -2251,8 +2255,7 @@ async function loadApprovals(){
   const countEl = document.getElementById('approvalsCount');
   countEl.textContent = t('loading');
   try{
-    const res = await fetch(apiUrl_('listApprovals', { adminEmail: USER.contact || '' }));
-    const data = await res.json();
+    const data = await apiFetch_('listApprovals', { adminEmail: USER.contact || '' });
     if(data.error){
       countEl.textContent = data.error;
       approvalsCache = [];
@@ -2296,9 +2299,7 @@ async function approveOne(requestId){
   try{
     const dueInput = document.getElementById('due-'+requestId);
     const dueDate = dueInput ? dueInput.value : '';
-    const url = apiUrl_('approveRequest', { requestId, decision: 'Approve', adminEmail: USER.contact || '', dueDate: dueDate || undefined });
-    const res = await fetch(url);
-    const data = await res.json();
+    const data = await apiFetch_('approveRequest', { requestId, decision: 'Approve', adminEmail: USER.contact || '', dueDate: dueDate || undefined });
     if(data.error){ alert(data.error); return; }
     loadApprovals();
   }catch(e){ alert(t('approvals_could_not_approve')); }
@@ -2308,9 +2309,7 @@ async function approveAllRequests(){
   if(!approvalsCache.length){ return; }
   if(!confirm(t('approvals_confirm_all', { n: approvalsCache.length }))) return;
   try{
-    const url = apiUrl_('approveAll', { adminEmail: USER.contact || '' });
-    const res = await fetch(url);
-    const data = await res.json();
+    const data = await apiFetch_('approveAll', { adminEmail: USER.contact || '' });
     if(data.error){ alert(data.error); return; }
     loadApprovals();
   }catch(e){ alert(t('approvals_could_not_approve_all')); }
@@ -2323,8 +2322,7 @@ async function loadSummary(){
   tilesEl.innerHTML = '<p class="section-sub">'+escapeHtml(t('loading'))+'</p>';
   document.getElementById('summaryDetail').innerHTML = '';
   try{
-    const res = await fetch(apiUrl_('getSummary', { adminEmail: USER.contact || '' }));
-    const data = await res.json();
+    const data = await apiFetch_('getSummary', { adminEmail: USER.contact || '' });
     if(data.error){ tilesEl.innerHTML = '<p class="section-sub">'+escapeHtml(data.error)+'</p>'; return; }
     summaryCache = data;
     renderSummaryTiles();
@@ -2451,8 +2449,7 @@ const onScanPatronSearchInput = debounce_(async function(){
   if(query.length < 2){ listEl.innerHTML = ''; return; }
   listEl.innerHTML = '<p style="opacity:0.6;font-size:13px;">'+escapeHtml(t('patron_searching'))+'</p>';
   try{
-    const res = await fetch(apiUrl_('searchUsers', { query }));
-    const data = await res.json();
+    const data = await apiFetch_('searchUsers', { query });
     renderPatronCandidates_(data.candidates || [], listEl, 'scanPatronSearch');
   }catch(e){
     listEl.innerHTML = '<div class="error-card">'+escapeHtml(t('patron_network_fail'))+'</div>';
@@ -2475,9 +2472,7 @@ async function addBook(){
   if(!title){ alert(t('shelf_enter_title')); return; }
   const itemId = nextItemId();
   try{
-    const url = apiUrl_('addBook', { itemId, title, author, group });
-    const res = await fetch(url);
-    const data = await res.json();
+    const data = await apiFetch_('addBook', { itemId, title, author, group });
     if(data.error){ alert(data.error); return; }
     document.getElementById('newTitle').value='';
     document.getElementById('newAuthor').value='';
