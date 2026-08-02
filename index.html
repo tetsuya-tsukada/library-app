@@ -367,6 +367,16 @@
           <option value="pending" data-i18n="shelf_filter_pending">Awaiting approval</option>
         </select>
       </div>
+      <!-- Options filled in by renderShelfGroupFilterOptions_ from
+           CONFIG.bookGroups (the Config tab's BookGroups list) — not a
+           fixed set like the status filter above, since groups are
+           defined per-library rather than built into the app. -->
+      <div class="field" id="shelfGroupFilterField" style="display:none;">
+        <label data-i18n="shelf_group_filter_label">Group</label>
+        <select id="shelfGroupFilter" onchange="renderBookList()">
+          <option value="all" data-i18n="shelf_filter_all_groups">All groups</option>
+        </select>
+      </div>
       <div id="bookList"></div>
     </section>
 
@@ -540,6 +550,8 @@ const I18N = {
     shelf_filter_available: 'Available',
     shelf_filter_borrowed: 'Borrowed',
     shelf_filter_pending: 'Awaiting approval',
+    shelf_group_filter_label: 'Group',
+    shelf_filter_all_groups: 'All groups',
     shelf_no_match: 'No books match your search or filter.',
     shelf_could_not_load: 'Could not load — check your connection and try again.',
     shelf_status_out: 'Out',
@@ -716,6 +728,8 @@ const I18N = {
     shelf_filter_available: '貸出可能',
     shelf_filter_borrowed: '貸出中',
     shelf_filter_pending: '承認待ち',
+    shelf_group_filter_label: 'グループ',
+    shelf_filter_all_groups: 'すべてのグループ',
     shelf_no_match: '検索または絞り込み条件に一致する本がありません。',
     shelf_could_not_load: '読み込めませんでした。接続を確認してもう一度お試しください。',
     shelf_status_out: '貸出中',
@@ -817,6 +831,7 @@ function refreshCurrentScreenDynamicText_(){
   }
   else if(currentScreenName_ === 'shelf'){
     loadShelf();
+    renderShelfGroupFilterOptions_();
     const form = document.getElementById('addBookForm');
     const abtn = document.getElementById('toggleAddBookBtn');
     if(form && abtn) abtn.textContent = (form.style.display !== 'none') ? t('cancel_btn') : t('shelf_add_books_btn');
@@ -1236,10 +1251,16 @@ async function loadRemoteConfig(){
     // fails the regex below and defaults back to enabled, defeating the
     // whole toggle. ?? only substitutes on null/undefined, not false.
     CONFIG.patronLoginEnabled = !/^(false|0|no)$/i.test(String(data.PatronLoginEnabled ?? '').trim());
+    // The Books sheet's Group column itself isn't shown/edited in the
+    // app (see Code.gs) — this list only powers the Shelf tab's Group
+    // filter, so admins working from a phone can still narrow the shelf
+    // down by category even though categorizing happens in the Sheet.
+    CONFIG.bookGroups = String(data.BookGroups || '').split(',').map(g => g.trim()).filter(Boolean);
   }catch(e){
     console.warn('Could not load config from the sheet', e);
   }
   applyPatronLoginVisibility_();
+  renderShelfGroupFilterOptions_();
 }
 
 // Lets a school roll this out admin-only at first: with
@@ -2149,12 +2170,31 @@ function bookStatusKey_(b){
   return 'available';
 }
 
+// Groups themselves come from the Config tab (BookGroups), not something
+// the app defines — populated here instead of as fixed <option>s in the
+// HTML, and hidden entirely if no groups are configured at all.
+function renderShelfGroupFilterOptions_(){
+  const field = document.getElementById('shelfGroupFilterField');
+  const select = document.getElementById('shelfGroupFilter');
+  if(!field || !select) return;
+  const groups = CONFIG.bookGroups || [];
+  if(!groups.length){ field.style.display = 'none'; return; }
+  field.style.display = '';
+  const current = select.value;
+  select.innerHTML = '<option value="all">'+escapeHtml(t('shelf_filter_all_groups'))+'</option>' +
+    groups.map(g => '<option value="'+escapeHtml(g)+'">'+escapeHtml(g)+'</option>').join('');
+  if(groups.includes(current)) select.value = current; // preserve the current pick across a re-render (e.g. a language switch), if it's still a valid option
+}
+
 function renderBookList(){
   const listEl = document.getElementById('bookList');
   const q = (document.getElementById('shelfSearch').value || '').trim().toLowerCase();
   const statusFilter = document.getElementById('shelfStatusFilter').value;
+  const groupFilterEl = document.getElementById('shelfGroupFilter');
+  const groupFilter = groupFilterEl ? groupFilterEl.value : 'all';
   const filtered = bookCache.filter(b => {
     if(statusFilter !== 'all' && bookStatusKey_(b) !== statusFilter) return false;
+    if(groupFilter !== 'all' && String(b.Group||'').trim() !== groupFilter) return false;
     if(!q) return true;
     return String(b.Title||'').toLowerCase().includes(q) ||
       String(b.Author||'').toLowerCase().includes(q) ||
@@ -2163,12 +2203,13 @@ function renderBookList(){
   listEl.innerHTML = filtered.map(b=>{
     const pillClass = b.Status==='Borrowed' ? 'borrowed' : (b.Status==='Pending' ? 'pending' : 'avail');
     const pillLabel = b.Status==='Borrowed' ? t('shelf_status_out') : (b.Status==='Pending' ? t('shelf_status_awaiting') : t('shelf_status_on_shelf'));
+    const groupSub = b.Group ? ' · ' + escapeHtml(b.Group) : '';
     const sub = (b.Status==='Borrowed' || b.Status==='Pending') ? ' · ' + escapeHtml(b.BorrowerName||'') : '';
     return `
     <div class="book-row">
       <div class="meta">
         <div class="title">${escapeHtml(b.Title)}</div>
-        <div class="sub">${escapeHtml(b.ItemID)}${sub}</div>
+        <div class="sub">${escapeHtml(b.ItemID)}${groupSub}${sub}</div>
       </div>
       <span class="status-pill ${pillClass}">${escapeHtml(pillLabel)}</span>
     </div>`;
