@@ -885,6 +885,11 @@ function saveSiteAccess_(code, ttlHours){
   localStorage.setItem(SITE_ACCESS_KEY, JSON.stringify(SITE_ACCESS));
 }
 
+function clearSiteAccess_(){
+  SITE_ACCESS = null;
+  localStorage.removeItem(SITE_ACCESS_KEY);
+}
+
 // Every backend call goes through this so the unlocked device's code is
 // never forgotten on some call site — action=verifySiteCode is the one
 // exception (it's how a device gets a code validated in the first place).
@@ -2594,6 +2599,21 @@ async function bootstrapSiteAccess_(){
     }catch(e){ /* fall through to the normal gate check below */ }
   }
   SITE_ACCESS = loadSiteAccess_();
+  if(SITE_ACCESS){
+    // A cached, not-yet-expired code could still have been invalidated
+    // server-side in the meantime (an admin ran "Regenerate site access
+    // code" — see Code.gs) — re-check it here so a device that already
+    // unlocked gets sent back to the gate on its very next load instead
+    // of quietly working until its TTL happens to run out.
+    try{
+      const res = await fetch(apiUrl_('verifySiteCode', { code: SITE_ACCESS.code }));
+      const data = await res.json();
+      if(!data.ok) clearSiteAccess_();
+    }catch(e){ /* network hiccup during the check itself — keep the
+                  cached access rather than lock the device out; a
+                  genuinely invalid code still gets caught by the normal
+                  per-action check in Code.gs */ }
+  }
   if(SITE_ACCESS){
     document.getElementById('mainApp').style.display = '';
     init();
