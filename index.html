@@ -391,16 +391,21 @@
              form anymore. -->
         <p class="section-sub" id="addBookStatus" style="text-align:center;margin-top:10px;"></p>
       </div>
-      <div class="divider"></div>
-      <h3 class="section-title" style="font-size:15px;" data-i18n="shelf_all_books">All books</h3>
-      <div class="field">
-        <label data-i18n="search_label">Search</label>
-        <input type="text" id="shelfSearch" placeholder="Search by title, author, or borrower" data-i18n-placeholder="shelf_search_placeholder" oninput="onShelfSearchInput_()">
+      <!-- Hidden while the Add book form above is open (see
+           setAddBookFormOpen_) so the two don't compete for attention
+           on a small screen. -->
+      <div id="allBooksSection">
+        <div class="divider"></div>
+        <h3 class="section-title" style="font-size:15px;" data-i18n="shelf_all_books">All books</h3>
+        <div class="field">
+          <label data-i18n="search_label">Search</label>
+          <input type="text" id="shelfSearch" placeholder="Search by title, author, or borrower" data-i18n-placeholder="shelf_search_placeholder" oninput="onShelfSearchInput_()">
+        </div>
+        <div id="bookList"></div>
+        <!-- Shows the first page of matches only (see renderBookList) —
+             hidden once every match is already on screen. -->
+        <button class="btn btn-outline" id="shelfShowMoreBtn" style="display:none;margin-top:6px;" data-i18n="shelf_show_more_btn" onclick="showMoreShelfBooks_()">Show more</button>
       </div>
-      <div id="bookList"></div>
-      <!-- Shows the first page of matches only (see renderBookList) —
-           hidden once every match is already on screen. -->
-      <button class="btn btn-outline" id="shelfShowMoreBtn" style="display:none;margin-top:6px;" data-i18n="shelf_show_more_btn" onclick="showMoreShelfBooks_()">Show more</button>
     </section>
 
     <!-- APPROVALS (admin only) -->
@@ -1062,9 +1067,7 @@ function showScreen(name){
     // the internal loadShelf() calls from the Refresh button or right
     // after adding a book, which would otherwise snap shut the label
     // that addBook() just rendered inside this same form.
-    const form = document.getElementById('addBookForm'); if(form) form.style.display = 'none';
-    const btn = document.getElementById('toggleAddBookBtn'); if(btn) btn.textContent = t('shelf_add_books_btn');
-    stopCoverScan();
+    setAddBookFormOpen_(false);
     loadShelf();
   }
   if(name==='approvals') loadApprovals();
@@ -2170,13 +2173,22 @@ function renderReturnQueueResults(results){
 // Collapsed by default — most Shelf visits are just to browse/search,
 // not to add a book, so keeping these fields out of the way until asked
 // for them keeps the screen from feeling cluttered up front.
-function toggleAddBookForm(){
+// Shows the Add book form and hides the All books list, or vice versa —
+// kept together so the two can never both show at once (shelf_all_books).
+function setAddBookFormOpen_(open){
   const form = document.getElementById('addBookForm');
   const btn = document.getElementById('toggleAddBookBtn');
+  const allBooks = document.getElementById('allBooksSection');
+  form.style.display = open ? 'block' : 'none';
+  if(allBooks) allBooks.style.display = open ? 'none' : '';
+  if(btn) btn.textContent = open ? t('cancel_btn') : t('shelf_add_books_btn');
+  if(!open) stopCoverScan(); // closing the form with the cover camera still open — release it rather than leave it running hidden
+}
+
+function toggleAddBookForm(){
+  const form = document.getElementById('addBookForm');
   const open = form.style.display !== 'none';
-  form.style.display = open ? 'none' : 'block';
-  btn.textContent = open ? t('shelf_add_books_btn') : t('cancel_btn');
-  if(open) stopCoverScan(); // closing the form with the cover camera still open — release it rather than leave it running hidden
+  setAddBookFormOpen_(!open);
 }
 
 async function loadShelf(){
