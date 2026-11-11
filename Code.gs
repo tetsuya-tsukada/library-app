@@ -617,11 +617,12 @@ const PRINT_LABELS_HTML = `<!DOCTYPE html>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
   body{font-family:sans-serif;margin:0;padding:16px;}
-  .toolbar{margin-bottom:14px;}
+  .toolbar{margin-bottom:14px;display:flex;gap:18px;align-items:center;flex-wrap:wrap;font-size:13px;}
+  .toolbar label{display:inline-flex;align-items:center;gap:4px;cursor:pointer;}
   .grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;}
   /* flexbox, not text-align, because the QR library can render a block-
      level element (e.g. a <table> of modules) that text-align alone
-     won't center */
+     does not center */
   .lab{
     border:1px dashed #999;border-radius:4px;padding:10px;
     display:flex;flex-direction:column;align-items:center;
@@ -629,12 +630,37 @@ const PRINT_LABELS_HTML = `<!DOCTYPE html>
   }
   .lab .t{font-size:11px;font-weight:600;margin:6px 0 2px;line-height:1.2;text-align:center;}
   .lab .i{font-family:monospace;font-size:9px;color:#666;text-align:center;}
+
+  /* 24mm continuous-tape label-printer mode (e.g. Brother P-touch Cube)
+     — one label per printed page, sized to the tape width, instead of
+     the grid above (meant for regular sheet paper). Toggled by
+     setLabelMode() below, which also injects a matching @page rule.
+     Whether this actually comes out at 24mm depends on the OS print
+     dialog sending that page size to the printer unscaled ("Actual
+     size", not "Fit to page") — check the first label against the tape
+     before printing a full run. */
+  body.mode-tape{padding:0;}
+  body.mode-tape .toolbar{padding:16px 16px 0;}
+  body.mode-tape .grid{display:block;padding:0 16px 16px;}
+  body.mode-tape .lab{
+    border:none;padding:2mm 0;width:24mm;box-sizing:border-box;
+    page-break-after:always;break-after:page;
+  }
+  body.mode-tape .lab .qr{width:18mm;height:18mm;}
+  body.mode-tape .lab .qr canvas, body.mode-tape .lab .qr img{width:100% !important;height:100% !important;}
+  body.mode-tape .lab .t{font-size:2.6mm;max-width:22mm;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:1.5mm 0 0.5mm;}
+  body.mode-tape .lab .i{font-size:2.2mm;}
   @media print { .toolbar{ display:none; } }
 </style>
 </head>
 <body>
-  <div class="toolbar"><button onclick="window.print()">Print</button></div>
+  <div class="toolbar">
+    <button onclick="window.print()">Print</button>
+    <label><input type="radio" name="labelMode" value="sheet" checked onchange="setLabelMode(this.value)"> Sheet (regular paper)</label>
+    <label><input type="radio" name="labelMode" value="tape" onchange="setLabelMode(this.value)"> Label printer — 24mm tape (e.g. Brother P-touch Cube)</label>
+  </div>
   <div class="grid" id="g"></div>
+  <style id="pageSizeStyle"></style>
   <script>
     const books = <?!= booksJson ?>;
     const g = document.getElementById('g');
@@ -642,7 +668,7 @@ const PRINT_LABELS_HTML = `<!DOCTYPE html>
       const cell = document.createElement('div');
       cell.className = 'lab';
       const qr = document.createElement('div');
-      qr.className = 'qr-' + b.itemId.replace(/[^a-zA-Z0-9-]/g, '');
+      qr.className = 'qr qr-' + b.itemId.replace(/[^a-zA-Z0-9-]/g, '');
       const t = document.createElement('div');
       t.className = 't';
       t.textContent = b.title;
@@ -655,9 +681,24 @@ const PRINT_LABELS_HTML = `<!DOCTYPE html>
     window.addEventListener('load', () => {
       books.forEach(b => {
         const holder = document.querySelector('.qr-' + b.itemId.replace(/[^a-zA-Z0-9-]/g, ''));
-        if (holder && window.QRCode) new QRCode(holder, { text: b.itemId, width: 80, height: 80 });
+        // Rendered well above its on-screen/print size (see the .qr
+        // sizing under tape mode below) so it stays crisp once CSS
+        // scales it down to the exact physical label dimensions.
+        if (holder && window.QRCode) new QRCode(holder, { text: b.itemId, width: 160, height: 160 });
       });
     });
+
+    // The 24mm width matches a common continuous-tape width (e.g.
+    // Brother P-touch Cube); only the per-label height is a guess here —
+    // tall enough for the QR plus two text lines with some padding.
+    // Adjust it if labels come out cut short or with a lot of blank tape.
+    const TAPE_LABEL_HEIGHT_MM = 36;
+    function setLabelMode(mode){
+      document.body.classList.toggle('mode-tape', mode === 'tape');
+      document.getElementById('pageSizeStyle').textContent = mode === 'tape'
+        ? '@page { size: 24mm ' + TAPE_LABEL_HEIGHT_MM + 'mm; margin: 0; }'
+        : '';
+    }
   </script>
 </body></html>`;
 
