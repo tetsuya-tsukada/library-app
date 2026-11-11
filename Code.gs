@@ -632,9 +632,14 @@ const PRINT_LABELS_HTML = `<!DOCTYPE html>
   .lab .i{font-family:monospace;font-size:9px;color:#666;text-align:center;}
 
   /* 24mm continuous-tape label-printer mode (e.g. Brother P-touch Cube)
-     — one label per printed page, sized to the tape width, instead of
-     the grid above (meant for regular sheet paper). Toggled by
+     — one label per printed page, laid out sideways along the tape's
+     length (QR on the left, title/item ID beside it), instead of the
+     grid above (meant for regular sheet paper). Toggled by
      setLabelMode() below, which also injects a matching @page rule.
+     The tape's fixed 24mm width becomes the page HEIGHT here, since
+     that is the printer's cross-feed dimension; TAPE_LABEL_LENGTH_MM
+     below is a guess for how much tape to feed per label — adjust it
+     if labels come out cut short or with a lot of blank tape.
      Whether this actually comes out at 24mm depends on the OS print
      dialog sending that page size to the printer unscaled ("Actual
      size", not "Fit to page") — check the first label against the tape
@@ -643,13 +648,15 @@ const PRINT_LABELS_HTML = `<!DOCTYPE html>
   body.mode-tape .toolbar{padding:16px 16px 0;}
   body.mode-tape .grid{display:block;padding:0 16px 16px;}
   body.mode-tape .lab{
-    border:none;padding:2mm 0;width:24mm;box-sizing:border-box;
+    border:none;padding:0 2mm;width:100%;height:24mm;box-sizing:border-box;
+    flex-direction:row;align-items:center;
     page-break-after:always;break-after:page;
   }
-  body.mode-tape .lab .qr{width:18mm;height:18mm;}
+  body.mode-tape .lab .qr{width:20mm;height:20mm;flex:0 0 auto;}
   body.mode-tape .lab .qr canvas, body.mode-tape .lab .qr img{width:100% !important;height:100% !important;}
-  body.mode-tape .lab .t{font-size:2.6mm;max-width:22mm;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:1.5mm 0 0.5mm;}
-  body.mode-tape .lab .i{font-size:2.2mm;}
+  body.mode-tape .lab .text{display:flex;flex-direction:column;justify-content:center;margin-left:2mm;max-width:40mm;overflow:hidden;}
+  body.mode-tape .lab .t{font-size:3mm;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0 0 0.8mm;text-align:left;}
+  body.mode-tape .lab .i{font-size:2.4mm;text-align:left;}
   @media print { .toolbar{ display:none; } }
 </style>
 </head>
@@ -669,13 +676,16 @@ const PRINT_LABELS_HTML = `<!DOCTYPE html>
       cell.className = 'lab';
       const qr = document.createElement('div');
       qr.className = 'qr qr-' + b.itemId.replace(/[^a-zA-Z0-9-]/g, '');
+      const textWrap = document.createElement('div');
+      textWrap.className = 'text';
       const t = document.createElement('div');
       t.className = 't';
       t.textContent = b.title;
       const i = document.createElement('div');
       i.className = 'i';
       i.textContent = b.itemId;
-      cell.appendChild(qr); cell.appendChild(t); cell.appendChild(i);
+      textWrap.appendChild(t); textWrap.appendChild(i);
+      cell.appendChild(qr); cell.appendChild(textWrap);
       g.appendChild(cell);
     });
     window.addEventListener('load', () => {
@@ -689,14 +699,16 @@ const PRINT_LABELS_HTML = `<!DOCTYPE html>
     });
 
     // The 24mm width matches a common continuous-tape width (e.g.
-    // Brother P-touch Cube); only the per-label height is a guess here —
-    // tall enough for the QR plus two text lines with some padding.
-    // Adjust it if labels come out cut short or with a lot of blank tape.
-    const TAPE_LABEL_HEIGHT_MM = 36;
+    // Brother P-touch Cube) and becomes the page height in this layout
+    // (the tape's fixed cross-feed dimension); only the per-label
+    // length is a guess here — wide enough for the QR plus the title
+    // and item ID beside it. Adjust it if labels come out cut short or
+    // with a lot of blank tape.
+    const TAPE_LABEL_LENGTH_MM = 50;
     function setLabelMode(mode){
       document.body.classList.toggle('mode-tape', mode === 'tape');
       document.getElementById('pageSizeStyle').textContent = mode === 'tape'
-        ? '@page { size: 24mm ' + TAPE_LABEL_HEIGHT_MM + 'mm; margin: 0; }'
+        ? '@page { size: ' + TAPE_LABEL_LENGTH_MM + 'mm 24mm; margin: 0; }'
         : '';
     }
   </script>
