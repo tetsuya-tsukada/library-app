@@ -2473,8 +2473,9 @@ async function addBook(){
   const group = document.getElementById('newGroup').value;
   if(!title){ alert(t('shelf_enter_title')); return; }
   const itemId = nextItemId();
+  const adminEmail = (USER && USER.matchType === 'admin') ? USER.contact : '';
   try{
-    const data = await apiFetch_('addBook', { itemId, title, author, group });
+    const data = await apiFetch_('addBook', { itemId, title, author, group, adminEmail: adminEmail || undefined });
     if(data.error){ alert(data.error); return; }
     document.getElementById('newTitle').value='';
     document.getElementById('newAuthor').value='';

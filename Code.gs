@@ -219,13 +219,17 @@ const MAX_BORROW_ITEMS = 4;
 const SITE_ACCESS_TTL_HOURS = 24;
 const APPROVAL_DECISION_COL = 7; // Approvals sheet: column G
 // Books sheet column layout: ItemID, Title, Author, Group, Status,
-// BorrowerName, BorrowerContact, BorrowDate, DueDate, BorrowCount.
-// Group sits right after Author (see migrateBooksAddGroupColumn_ for
-// sheets created before this column existed) — every column from
-// Status onward is one index later than it used to be, so this
-// constant (and every data[row][n] / getRange(row, n, ...) reference
-// to those columns throughout this file) accounts for that shift.
+// BorrowerName, BorrowerContact, BorrowDate, DueDate, BorrowCount,
+// AddedBy. Group sits right after Author (see
+// migrateBooksAddGroupColumn_ for sheets created before this column
+// existed) — every column from Status onward is one index later than
+// it used to be, so this constant (and every data[row][n] /
+// getRange(row, n, ...) reference to those columns throughout this
+// file) accounts for that shift. BorrowCount and AddedBy were both
+// added later, appended after DueDate rather than inserted mid-sheet,
+// so they needed no such shift.
 const BORROW_COUNT_COL = 10; // Books sheet: column J
+const ADDED_BY_COL = 11; // Books sheet: column K — admin who added the book
 
 function getSS() {
   return SHEET_ID ? SpreadsheetApp.openById(SHEET_ID) : SpreadsheetApp.getActiveSpreadsheet();
@@ -236,7 +240,7 @@ function setupSheets() {
   let books = ss.getSheetByName(BOOKS_SHEET);
   if (!books) {
     books = ss.insertSheet(BOOKS_SHEET);
-    books.appendRow(['ItemID', 'Title', 'Author', 'Group', 'Status', 'BorrowerName', 'BorrowerContact', 'BorrowDate', 'DueDate', 'BorrowCount']);
+    books.appendRow(['ItemID', 'Title', 'Author', 'Group', 'Status', 'BorrowerName', 'BorrowerContact', 'BorrowDate', 'DueDate', 'BorrowCount', 'AddedBy']);
     books.setFrozenRows(1);
     applyBookGroupValidation_(books);
   } else {
@@ -246,14 +250,23 @@ function setupSheets() {
       // the one-time migrateBooksAddGroupColumn_ (inserting a column
       // shifts every row's existing data, which isn't something to do
       // as a side effect of a generic "make sure the tabs exist" call).
-      // Leave BorrowCount's header alone too: on an unmigrated sheet it's
-      // still one column to the left of BORROW_COUNT_COL, so "fixing" it
-      // at today's column constant would just mislabel the wrong cell.
-    } else if (String(books.getRange(1, BORROW_COUNT_COL).getValue()).trim() !== 'BorrowCount') {
-      // Existing tab from before BorrowCount existed — add the header
-      // without touching any existing rows or their data (existing rows'
-      // counts just start at blank/0 going forward).
-      books.getRange(1, BORROW_COUNT_COL).setValue('BorrowCount');
+      // Leave BorrowCount's and AddedBy's headers alone too: on an
+      // unmigrated sheet they're still one column to the left of
+      // BORROW_COUNT_COL/ADDED_BY_COL, so "fixing" them at today's
+      // column constants would just mislabel the wrong cells.
+    } else {
+      if (String(books.getRange(1, BORROW_COUNT_COL).getValue()).trim() !== 'BorrowCount') {
+        // Existing tab from before BorrowCount existed — add the header
+        // without touching any existing rows or their data (existing
+        // rows' counts just start at blank/0 going forward).
+        books.getRange(1, BORROW_COUNT_COL).setValue('BorrowCount');
+      }
+      if (String(books.getRange(1, ADDED_BY_COL).getValue()).trim() !== 'AddedBy') {
+        // Existing tab from before AddedBy existed — add the header
+        // without touching any existing rows (they just stay blank in
+        // this column, since there's no record of who added them).
+        books.getRange(1, ADDED_BY_COL).setValue('AddedBy');
+      }
     }
   }
 
@@ -850,7 +863,7 @@ function doGet(e) {
           result = listBooks();
           break;
         case 'addBook':
-          result = addBook(e.parameter.itemId, e.parameter.title, e.parameter.author, e.parameter.group);
+          result = addBook(e.parameter.itemId, e.parameter.title, e.parameter.author, e.parameter.group, e.parameter.adminEmail);
           break;
         case 'myLoans':
           result = myLoans(e.parameter.names);
@@ -1322,6 +1335,23 @@ function isAdmin_(email) {
   return false;
 }
 
+// Looks up an admin's display name from the Admins tab by email, for
+// attributing an action (e.g. addBook) to a person rather than just an
+// address. Falls back to the email itself if the admin has no Name set,
+// or to '' if the email isn't a recognized admin at all.
+function getAdminName_(email) {
+  if (!email) return '';
+  const sh = getSS().getSheetByName(ADMINS_SHEET);
+  const data = sh.getDataRange().getValues();
+  const target = String(email).trim().toLowerCase();
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][0]).trim().toLowerCase() === target) {
+      return String(data[i][1] || '').trim() || email;
+    }
+  }
+  return '';
+}
+
 function getUsersSheet_() {
   const sh = getSS().getSheetByName(USERS_SHEET);
   const data = sh.getDataRange().getValues();
@@ -1472,11 +1502,12 @@ function listBooks() {
   return { books: rows };
 }
 
-function addBook(itemId, title, author, group) {
+function addBook(itemId, title, author, group, adminEmail) {
   if (!itemId || !title) return { error: 'itemId and title required' };
   const { sh, data } = getBooksSheet_();
   if (findRow_(data, itemId) !== -1) return { error: 'itemId already exists' };
-  sh.appendRow([itemId, title, author || '', group || '', 'Available', '', '', '', '', 0]);
+  const addedBy = getAdminName_(adminEmail);
+  sh.appendRow([itemId, title, author || '', group || '', 'Available', '', '', '', '', 0, addedBy]);
   return { ok: true, itemId, title };
 }
 
