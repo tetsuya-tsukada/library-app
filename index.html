@@ -330,8 +330,8 @@
           </div>
         </div>
         <!-- Options filled in by renderAddBookGroupOptions_ from
-             CONFIG.bookGroups, same list as the Shelf filter — hidden
-             entirely if no groups are configured. -->
+             CONFIG.bookGroups — hidden entirely if no groups are
+             configured. -->
         <div class="field" id="newGroupField" style="display:none;">
           <label data-i18n="shelf_group_filter_label">Group</label>
           <select id="newGroup">
@@ -350,6 +350,23 @@
             <button type="button" class="btn btn-outline" style="flex:1;" data-i18n="cancel_btn" onclick="stopCoverScan()">Cancel</button>
           </div>
         </div>
+        <!-- Shown after Capture, before OCR runs: the still frame with a
+             draggable box so the user frames just the text they want
+             read (see captureCoverFrame/confirmCoverCrop) — narrowing
+             the OCR input this way reads far more reliably than handing
+             Tesseract the whole cover shot and guessing which line is
+             the title. -->
+        <div id="coverCropWrap" style="display:none;margin-bottom:18px;">
+          <p class="section-sub" id="coverCropHint" style="text-align:center;"></p>
+          <div id="coverCropStage" style="position:relative;width:100%;border-radius:8px;overflow:hidden;border:1px solid var(--line);touch-action:none;">
+            <img id="coverCropImg" style="width:100%;display:block;" draggable="false">
+            <div id="coverCropBox" style="position:absolute;border:2px dashed var(--gold);background:rgba(201,162,39,0.2);display:none;"></div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:10px;">
+            <button type="button" class="btn btn-primary" style="flex:1;" data-i18n="crop_use_btn" onclick="confirmCoverCrop()">Use this</button>
+            <button type="button" class="btn btn-outline" style="flex:1;" data-i18n="retake_btn" onclick="retakeCoverCrop()">Retake</button>
+          </div>
+        </div>
         <p class="section-sub" id="ocrStatus" style="margin:0 0 12px;"></p>
         <button class="btn btn-primary" data-i18n="shelf_add_book_btn" onclick="addBook()">Add book</button>
         <!-- Confirmation text after a successful add — no QR label here;
@@ -358,32 +375,6 @@
              form anymore. -->
         <p class="section-sub" id="addBookStatus" style="text-align:center;margin-top:10px;"></p>
       </div>
-      <div class="divider"></div>
-      <h3 class="section-title" style="font-size:15px;" data-i18n="shelf_all_books">All books</h3>
-      <div class="field">
-        <label data-i18n="search_label">Search</label>
-        <input type="text" id="shelfSearch" placeholder="Search by title, author, or borrower" data-i18n-placeholder="shelf_search_placeholder" oninput="renderBookList()">
-      </div>
-      <div class="field">
-        <label data-i18n="filter_label">Filter</label>
-        <select id="shelfStatusFilter" onchange="renderBookList()">
-          <option value="all" data-i18n="shelf_filter_all">All books</option>
-          <option value="available" data-i18n="shelf_filter_available">Available</option>
-          <option value="borrowed" data-i18n="shelf_filter_borrowed">Borrowed</option>
-          <option value="pending" data-i18n="shelf_filter_pending">Awaiting approval</option>
-        </select>
-      </div>
-      <!-- Options filled in by renderShelfGroupFilterOptions_ from
-           CONFIG.bookGroups (the Config tab's BookGroups list) — not a
-           fixed set like the status filter above, since groups are
-           defined per-library rather than built into the app. -->
-      <div class="field" id="shelfGroupFilterField" style="display:none;">
-        <label data-i18n="shelf_group_filter_label">Group</label>
-        <select id="shelfGroupFilter" onchange="renderBookList()">
-          <option value="all" data-i18n="shelf_filter_all_groups">All groups</option>
-        </select>
-      </div>
-      <div id="bookList"></div>
     </section>
 
     <!-- APPROVALS (admin only) -->
@@ -437,11 +428,12 @@ const I18N = {
     remove_btn: 'Remove',
     scan_btn: 'Scan',
     capture_btn: 'Capture',
+    crop_use_btn: 'Use this',
+    retake_btn: 'Retake',
     search_label: 'Search',
     title_label: 'Title',
     author_label: 'Author',
     name_label: 'Name',
-    filter_label: 'Filter',
     find_patron_label: 'Find patron',
     start_typing_placeholder: 'Start typing…',
     search_by_name_placeholder: 'Search by name…',
@@ -552,21 +544,12 @@ const I18N = {
     shelf_add_book_btn: 'Add book',
     shelf_no_group_option: 'No group',
     shelf_book_added: 'Added "{title}".',
-    shelf_all_books: 'All books',
-    shelf_search_placeholder: 'Search by title, author, or borrower',
-    shelf_filter_all: 'All books',
-    shelf_filter_available: 'Available',
-    shelf_filter_borrowed: 'Borrowed',
-    shelf_filter_pending: 'Awaiting approval',
     shelf_group_filter_label: 'Group',
-    shelf_filter_all_groups: 'All groups',
-    shelf_no_match: 'No books match your search or filter.',
     shelf_could_not_load: 'Could not load — check your connection and try again.',
-    shelf_status_out: 'Out',
-    shelf_status_awaiting: 'Awaiting approval',
-    shelf_status_on_shelf: 'On shelf',
     shelf_enter_title: 'Enter a title.',
     shelf_add_fail: 'Could not add book — check your connection and try again.',
+    cover_crop_hint: 'Drag a box around the {target} on the photo.',
+    cover_crop_too_small: 'Drag a box around the text first.',
     cover_loading_scanner: 'Loading text scanner (first use downloads language data)…',
     cover_reading: 'Reading {target}…',
     cover_filled: 'Filled in from the photo — please double-check before adding.',
@@ -617,11 +600,12 @@ const I18N = {
     remove_btn: '削除',
     scan_btn: 'スキャン',
     capture_btn: '撮影',
+    crop_use_btn: 'この範囲を使う',
+    retake_btn: '撮り直す',
     search_label: '検索',
     title_label: 'タイトル',
     author_label: '著者',
     name_label: '名前',
-    filter_label: '絞り込み',
     find_patron_label: '利用者を検索',
     start_typing_placeholder: '入力を始めてください…',
     search_by_name_placeholder: '名前で検索…',
@@ -732,21 +716,12 @@ const I18N = {
     shelf_add_book_btn: '本を追加',
     shelf_no_group_option: 'グループなし',
     shelf_book_added: '「{title}」を追加しました。',
-    shelf_all_books: 'すべての本',
-    shelf_search_placeholder: 'タイトル・著者・借りている人で検索',
-    shelf_filter_all: 'すべての本',
-    shelf_filter_available: '貸出可能',
-    shelf_filter_borrowed: '貸出中',
-    shelf_filter_pending: '承認待ち',
     shelf_group_filter_label: 'グループ',
-    shelf_filter_all_groups: 'すべてのグループ',
-    shelf_no_match: '検索または絞り込み条件に一致する本がありません。',
     shelf_could_not_load: '読み込めませんでした。接続を確認してもう一度お試しください。',
-    shelf_status_out: '貸出中',
-    shelf_status_awaiting: '承認待ち',
-    shelf_status_on_shelf: '棚にあります',
     shelf_enter_title: 'タイトルを入力してください。',
     shelf_add_fail: '本を追加できませんでした。接続を確認してもう一度お試しください。',
+    cover_crop_hint: '写真の中の{target}を枠で囲んでください。',
+    cover_crop_too_small: '先にテキストの範囲を枠で囲んでください。',
     cover_loading_scanner: '文字認識を読み込み中（初回は言語データをダウンロードします）…',
     cover_reading: '{target}を読み取り中…',
     cover_filled: '写真から入力しました。追加する前に確認してください。',
@@ -841,7 +816,6 @@ function refreshCurrentScreenDynamicText_(){
   }
   else if(currentScreenName_ === 'shelf'){
     loadShelf();
-    renderShelfGroupFilterOptions_();
     renderAddBookGroupOptions_();
     const form = document.getElementById('addBookForm');
     const abtn = document.getElementById('toggleAddBookBtn');
@@ -1279,15 +1253,13 @@ async function loadRemoteConfig(){
     // fails the regex below and defaults back to enabled, defeating the
     // whole toggle. ?? only substitutes on null/undefined, not false.
     CONFIG.patronLoginEnabled = !/^(false|0|no)$/i.test(String(data.PatronLoginEnabled ?? '').trim());
-    // Source list for both the Shelf tab's Group filter and the Add Book
-    // form's Group dropdown — hidden in both places if no groups are
-    // configured in the Config tab.
+    // Source list for the Add Book form's Group dropdown — hidden if no
+    // groups are configured in the Config tab.
     CONFIG.bookGroups = String(data.BookGroups || '').split(',').map(g => g.trim()).filter(Boolean);
   }catch(e){
     console.warn('Could not load config from the sheet', e);
   }
   applyPatronLoginVisibility_();
-  renderShelfGroupFilterOptions_();
   renderAddBookGroupOptions_();
 }
 
@@ -2175,37 +2147,14 @@ async function loadShelf(){
     bookCache = data.books || [];
     const borrowed = bookCache.filter(b=>b.Status==='Borrowed').length;
     countEl.textContent = t('shelf_count', { n: bookCache.length, m: borrowed });
-    renderBookList();
   }catch(e){
     countEl.textContent = t('shelf_could_not_load');
   }
 }
 
-// Book status as stored on the sheet is blank for on-shelf books — this
-// normalizes that to 'available' so it lines up with the filter's option
-// values.
-function bookStatusKey_(b){
-  if(b.Status === 'Borrowed') return 'borrowed';
-  if(b.Status === 'Pending') return 'pending';
-  return 'available';
-}
-
 // Groups themselves come from the Config tab (BookGroups), not something
 // the app defines — populated here instead of as fixed <option>s in the
 // HTML, and hidden entirely if no groups are configured at all.
-function renderShelfGroupFilterOptions_(){
-  const field = document.getElementById('shelfGroupFilterField');
-  const select = document.getElementById('shelfGroupFilter');
-  if(!field || !select) return;
-  const groups = CONFIG.bookGroups || [];
-  if(!groups.length){ field.style.display = 'none'; return; }
-  field.style.display = '';
-  const current = select.value;
-  select.innerHTML = '<option value="all">'+escapeHtml(t('shelf_filter_all_groups'))+'</option>' +
-    groups.map(g => '<option value="'+escapeHtml(g)+'">'+escapeHtml(g)+'</option>').join('');
-  if(groups.includes(current)) select.value = current; // preserve the current pick across a re-render (e.g. a language switch), if it's still a valid option
-}
-
 function renderAddBookGroupOptions_(){
   const field = document.getElementById('newGroupField');
   const select = document.getElementById('newGroup');
@@ -2217,36 +2166,6 @@ function renderAddBookGroupOptions_(){
   select.innerHTML = '<option value="">'+escapeHtml(t('shelf_no_group_option'))+'</option>' +
     groups.map(g => '<option value="'+escapeHtml(g)+'">'+escapeHtml(g)+'</option>').join('');
   if(groups.includes(current)) select.value = current;
-}
-
-function renderBookList(){
-  const listEl = document.getElementById('bookList');
-  const q = (document.getElementById('shelfSearch').value || '').trim().toLowerCase();
-  const statusFilter = document.getElementById('shelfStatusFilter').value;
-  const groupFilterEl = document.getElementById('shelfGroupFilter');
-  const groupFilter = groupFilterEl ? groupFilterEl.value : 'all';
-  const filtered = bookCache.filter(b => {
-    if(statusFilter !== 'all' && bookStatusKey_(b) !== statusFilter) return false;
-    if(groupFilter !== 'all' && String(b.Group||'').trim() !== groupFilter) return false;
-    if(!q) return true;
-    return String(b.Title||'').toLowerCase().includes(q) ||
-      String(b.Author||'').toLowerCase().includes(q) ||
-      String(b.BorrowerName||'').toLowerCase().includes(q);
-  });
-  listEl.innerHTML = filtered.map(b=>{
-    const pillClass = b.Status==='Borrowed' ? 'borrowed' : (b.Status==='Pending' ? 'pending' : 'avail');
-    const pillLabel = b.Status==='Borrowed' ? t('shelf_status_out') : (b.Status==='Pending' ? t('shelf_status_awaiting') : t('shelf_status_on_shelf'));
-    const groupSub = b.Group ? ' · ' + escapeHtml(b.Group) : '';
-    const sub = (b.Status==='Borrowed' || b.Status==='Pending') ? ' · ' + escapeHtml(b.BorrowerName||'') : '';
-    return `
-    <div class="book-row">
-      <div class="meta">
-        <div class="title">${escapeHtml(b.Title)}</div>
-        <div class="sub">${escapeHtml(b.ItemID)}${groupSub}${sub}</div>
-      </div>
-      <span class="status-pill ${pillClass}">${escapeHtml(pillLabel)}</span>
-    </div>`;
-  }).join('') || '<p style="opacity:0.6;font-size:13px;">'+escapeHtml(t('shelf_no_match'))+'</p>';
 }
 
 let approvalsCache = [];
@@ -2499,6 +2418,10 @@ function loadTesseract(){
 
 let coverScanTarget_ = null; // 'title' | 'author' — which field the open camera preview is scanning for
 let coverScanStream_ = null; // MediaStream to stop once done, so the camera light actually turns off
+let coverCropTarget_ = null; // same as coverScanTarget_, but kept alive through the crop step since stopCoverScan() (called right after Capture) clears coverScanTarget_
+let coverCaptureCanvas_ = null; // full-resolution still frame, held until the crop step commits or is discarded
+let coverCropRect_ = null; // {x,y,w,h} as fractions (0..1) of the displayed image — the box the user has framed
+let coverCropDragStart_ = null;
 
 // A live preview (framed by the user) rather than handing off to the
 // phone's native camera app for a single blind shot — same idea as the
@@ -2523,31 +2446,127 @@ async function startCoverScan(target){
   }
 }
 
+// Also used as the general "abandon any in-progress cover scan" reset —
+// called when leaving the Shelf screen, collapsing the add-book form, or
+// hitting Cancel — so it clears the crop step's state too, not just the
+// live camera. captureCoverFrame() calls this and then immediately sets
+// the crop state back up, so that ordering still works.
 function stopCoverScan(){
   document.getElementById('coverReaderWrap').style.display = 'none';
+  document.getElementById('coverCropWrap').style.display = 'none';
   if(coverScanStream_){
     coverScanStream_.getTracks().forEach(t => t.stop());
     coverScanStream_ = null;
   }
   coverScanTarget_ = null;
+  coverCropTarget_ = null;
+  coverCaptureCanvas_ = null;
+  coverCropRect_ = null;
 }
 
-async function captureCoverFrame(){
+function captureCoverFrame(){
   const target = coverScanTarget_;
   const video = document.getElementById('coverVideo');
   const canvas = document.createElement('canvas');
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
   canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-  stopCoverScan(); // release the camera before the OCR pass, which can take a few seconds
+  stopCoverScan(); // release the camera — the crop step and OCR pass that follow don't need it
+  coverCropTarget_ = target;
+  coverCaptureCanvas_ = canvas;
+  showCoverCrop_();
+}
+
+// Shows the still frame with a box the user can drag to frame just the
+// title/author text, before any OCR runs.
+function showCoverCrop_(){
+  document.getElementById('coverCropImg').src = coverCaptureCanvas_.toDataURL('image/jpeg', 0.92);
+  const targetLabel = t(coverCropTarget_ === 'title' ? 'target_title' : 'target_author');
+  document.getElementById('coverCropHint').textContent = t('cover_crop_hint', { target: targetLabel });
+  // A middle band to start from, so there's usually just a small drag
+  // to adjust rather than framing a box from nothing.
+  coverCropRect_ = { x: 0.1, y: 0.4, w: 0.8, h: 0.2 };
+  renderCoverCropBox_();
+  document.getElementById('coverCropWrap').style.display = 'block';
+}
+
+function renderCoverCropBox_(){
+  const box = document.getElementById('coverCropBox');
+  if(!coverCropRect_){ box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  box.style.left = (coverCropRect_.x * 100) + '%';
+  box.style.top = (coverCropRect_.y * 100) + '%';
+  box.style.width = (coverCropRect_.w * 100) + '%';
+  box.style.height = (coverCropRect_.h * 100) + '%';
+}
+
+function coverCropPosFromEvent_(e){
+  const rect = document.getElementById('coverCropStage').getBoundingClientRect();
+  return {
+    x: Math.min(Math.max((e.clientX - rect.left) / rect.width, 0), 1),
+    y: Math.min(Math.max((e.clientY - rect.top) / rect.height, 0), 1),
+  };
+}
+
+// Drag-to-select over the captured frame — each drag replaces the
+// previous box, same as an ordinary crop tool. Bound once at load since
+// #coverCropStage is static markup, not re-created per scan.
+(function setupCoverCropDrag_(){
+  const stage = document.getElementById('coverCropStage');
+  stage.addEventListener('pointerdown', (e) => {
+    stage.setPointerCapture(e.pointerId);
+    coverCropDragStart_ = coverCropPosFromEvent_(e);
+    coverCropRect_ = { x: coverCropDragStart_.x, y: coverCropDragStart_.y, w: 0, h: 0 };
+    renderCoverCropBox_();
+  });
+  stage.addEventListener('pointermove', (e) => {
+    if(!coverCropDragStart_) return;
+    const p = coverCropPosFromEvent_(e);
+    const x0 = Math.min(coverCropDragStart_.x, p.x), x1 = Math.max(coverCropDragStart_.x, p.x);
+    const y0 = Math.min(coverCropDragStart_.y, p.y), y1 = Math.max(coverCropDragStart_.y, p.y);
+    coverCropRect_ = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+    renderCoverCropBox_();
+  });
+  stage.addEventListener('pointerup', () => { coverCropDragStart_ = null; });
+})();
+
+function retakeCoverCrop(){
+  document.getElementById('coverCropWrap').style.display = 'none';
+  coverCaptureCanvas_ = null;
+  coverCropRect_ = null;
+  startCoverScan(coverCropTarget_);
+}
+
+async function confirmCoverCrop(){
+  const target = coverCropTarget_;
+  const source = coverCaptureCanvas_;
+  const rect = coverCropRect_;
   const statusEl = document.getElementById('ocrStatus');
+  if(!source || !rect || rect.w < 0.02 || rect.h < 0.02){
+    statusEl.textContent = t('cover_crop_too_small');
+    return;
+  }
+  document.getElementById('coverCropWrap').style.display = 'none';
+  const cropped = document.createElement('canvas');
+  cropped.width = Math.round(rect.w * source.width);
+  cropped.height = Math.round(rect.h * source.height);
+  cropped.getContext('2d').drawImage(
+    source,
+    Math.round(rect.x * source.width), Math.round(rect.y * source.height), cropped.width, cropped.height,
+    0, 0, cropped.width, cropped.height
+  );
+  coverCaptureCanvas_ = null;
+  coverCropRect_ = null;
   statusEl.textContent = t('cover_loading_scanner');
   const targetLabel = t(target === 'title' ? 'target_title' : 'target_author');
   try{
     const Tesseract = await loadTesseract();
     statusEl.textContent = t('cover_reading', { target: targetLabel });
-    const { data } = await Tesseract.recognize(canvas, 'jpn+eng');
-    const guess = guessCoverLine_(data);
+    const { data } = await Tesseract.recognize(cropped, 'jpn+eng');
+    // The box is already framed around just the wanted text, so (unlike
+    // a whole-cover shot) there's no need to guess which line it is —
+    // just take whatever text came back.
+    const guess = (data.text || '').trim().replace(/\s*\n+\s*/g, ' ');
     if(guess){
       document.getElementById(target === 'title' ? 'newTitle' : 'newAuthor').value = guess;
       statusEl.textContent = t('cover_filled');
@@ -2558,19 +2577,6 @@ async function captureCoverFrame(){
     console.warn('OCR failed', e);
     statusEl.textContent = t('cover_could_not_read');
   }
-}
-
-// Rough heuristic only: the tallest confidently-read line in the framed
-// shot is taken as the answer — since the scan is already aimed at just
-// the title or just the author, there's no need to guess which of
-// several lines is which, unlike a single combined cover photo.
-function guessCoverLine_(ocrData){
-  const lines = (ocrData.lines || [])
-    .map(l => ({ text: (l.text||'').trim(), height: l.bbox ? (l.bbox.y1 - l.bbox.y0) : 0, confidence: l.confidence||0 }))
-    .filter(l => l.text.length > 0 && l.confidence > 40); // CJK titles can be a single short line
-  if(!lines.length) return '';
-  lines.sort((a,b) => b.height - a.height);
-  return lines[0].text;
 }
 
 // A phone's ordinary camera app recognizes the site access QR as a URL
