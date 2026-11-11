@@ -105,6 +105,17 @@
   }
   .scan-toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 
+  /* Cover-scan camera & crop steps (see startCoverScan/showCoverCrop_) —
+     shown as a centered overlay above everything else rather than
+     inline in the scrolled add-book form, so the camera is always
+     front-and-center regardless of scroll position. */
+  .cover-scan-overlay{
+    position:fixed;inset:0;z-index:900;background:rgba(27,36,48,0.92);
+    display:none;align-items:center;justify-content:center;padding:20px;
+  }
+  .cover-scan-overlay.show{display:flex;}
+  .cover-scan-overlay-inner{width:100%;max-width:440px;}
+
   /* Stamp result card */
   .stamp-card{
     background:var(--paper);color:var(--ink);border-radius:6px;padding:28px 22px;
@@ -342,12 +353,15 @@
              one shared reader, shown for whichever field's Scan button
              was tapped (see startCoverScan/coverScanTarget_). A single
              photo rarely frames both the title and author cleanly, so
-             each is its own scan aimed at just that part of the cover. -->
-        <div id="coverReaderWrap" style="display:none;margin-bottom:18px;">
-          <video id="coverVideo" autoplay playsinline muted style="width:100%;border-radius:8px;border:1px solid var(--line);"></video>
-          <div style="display:flex;gap:8px;margin-top:10px;">
-            <button type="button" class="btn btn-primary" style="flex:1;" data-i18n="capture_btn" onclick="captureCoverFrame()">Capture</button>
-            <button type="button" class="btn btn-outline" style="flex:1;" data-i18n="cancel_btn" onclick="stopCoverScan()">Cancel</button>
+             each is its own scan aimed at just that part of the cover.
+             A centered overlay (see .cover-scan-overlay) rather than
+             inline, so it's front-and-center no matter where the form
+             is scrolled — tapping the preview itself captures. -->
+        <div id="coverReaderWrap" class="cover-scan-overlay">
+          <div class="cover-scan-overlay-inner">
+            <video id="coverVideo" autoplay playsinline muted onclick="captureCoverFrame()" style="width:100%;border-radius:8px;border:1px solid var(--line);cursor:pointer;"></video>
+            <p class="section-sub" style="text-align:center;margin:10px 0 14px;" data-i18n="cover_tap_hint">Tap the preview to capture</p>
+            <button type="button" class="btn btn-outline" data-i18n="cancel_btn" onclick="stopCoverScan()">Cancel</button>
           </div>
         </div>
         <!-- Shown after Capture, before OCR runs: the still frame with a
@@ -356,15 +370,17 @@
              the OCR input this way reads far more reliably than handing
              Tesseract the whole cover shot and guessing which line is
              the title. -->
-        <div id="coverCropWrap" style="display:none;margin-bottom:18px;">
-          <p class="section-sub" id="coverCropHint" style="text-align:center;"></p>
-          <div id="coverCropStage" style="position:relative;width:100%;border-radius:8px;overflow:hidden;border:1px solid var(--line);touch-action:none;">
-            <img id="coverCropImg" style="width:100%;display:block;" draggable="false">
-            <div id="coverCropBox" style="position:absolute;border:2px dashed var(--gold);background:rgba(201,162,39,0.2);display:none;"></div>
-          </div>
-          <div style="display:flex;gap:8px;margin-top:10px;">
-            <button type="button" class="btn btn-primary" style="flex:1;" data-i18n="crop_use_btn" onclick="confirmCoverCrop()">Use this</button>
-            <button type="button" class="btn btn-outline" style="flex:1;" data-i18n="retake_btn" onclick="retakeCoverCrop()">Retake</button>
+        <div id="coverCropWrap" class="cover-scan-overlay">
+          <div class="cover-scan-overlay-inner">
+            <p class="section-sub" id="coverCropHint" style="text-align:center;"></p>
+            <div id="coverCropStage" style="position:relative;width:100%;border-radius:8px;overflow:hidden;border:1px solid var(--line);touch-action:none;">
+              <img id="coverCropImg" style="width:100%;display:block;" draggable="false">
+              <div id="coverCropBox" style="position:absolute;border:2px dashed var(--gold);background:rgba(201,162,39,0.2);display:none;"></div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:10px;">
+              <button type="button" class="btn btn-primary" style="flex:1;" data-i18n="crop_use_btn" onclick="confirmCoverCrop()">Use this</button>
+              <button type="button" class="btn btn-outline" style="flex:1;" data-i18n="retake_btn" onclick="retakeCoverCrop()">Retake</button>
+            </div>
           </div>
         </div>
         <p class="section-sub" id="ocrStatus" style="margin:0 0 12px;"></p>
@@ -375,6 +391,16 @@
              form anymore. -->
         <p class="section-sub" id="addBookStatus" style="text-align:center;margin-top:10px;"></p>
       </div>
+      <div class="divider"></div>
+      <h3 class="section-title" style="font-size:15px;" data-i18n="shelf_all_books">All books</h3>
+      <div class="field">
+        <label data-i18n="search_label">Search</label>
+        <input type="text" id="shelfSearch" placeholder="Search by title, author, or borrower" data-i18n-placeholder="shelf_search_placeholder" oninput="onShelfSearchInput_()">
+      </div>
+      <div id="bookList"></div>
+      <!-- Shows the first page of matches only (see renderBookList) —
+           hidden once every match is already on screen. -->
+      <button class="btn btn-outline" id="shelfShowMoreBtn" style="display:none;margin-top:6px;" data-i18n="shelf_show_more_btn" onclick="showMoreShelfBooks_()">Show more</button>
     </section>
 
     <!-- APPROVALS (admin only) -->
@@ -427,7 +453,6 @@ const I18N = {
     refresh_btn: 'Refresh',
     remove_btn: 'Remove',
     scan_btn: 'Scan',
-    capture_btn: 'Capture',
     crop_use_btn: 'Use this',
     retake_btn: 'Retake',
     search_label: 'Search',
@@ -546,8 +571,16 @@ const I18N = {
     shelf_book_added: 'Added "{title}".',
     shelf_group_filter_label: 'Group',
     shelf_could_not_load: 'Could not load — check your connection and try again.',
+    shelf_all_books: 'All books',
+    shelf_search_placeholder: 'Search by title, author, or borrower',
+    shelf_no_match: 'No books match your search.',
+    shelf_show_more_btn: 'Show more',
+    shelf_status_out: 'Out',
+    shelf_status_awaiting: 'Awaiting approval',
+    shelf_status_on_shelf: 'On shelf',
     shelf_enter_title: 'Enter a title.',
     shelf_add_fail: 'Could not add book — check your connection and try again.',
+    cover_tap_hint: 'Tap the preview to capture',
     cover_crop_hint: 'Drag a box around the {target} on the photo.',
     cover_crop_too_small: 'Drag a box around the text first.',
     cover_loading_scanner: 'Loading text scanner (first use downloads language data)…',
@@ -599,7 +632,6 @@ const I18N = {
     refresh_btn: '更新',
     remove_btn: '削除',
     scan_btn: 'スキャン',
-    capture_btn: '撮影',
     crop_use_btn: 'この範囲を使う',
     retake_btn: '撮り直す',
     search_label: '検索',
@@ -718,8 +750,16 @@ const I18N = {
     shelf_book_added: '「{title}」を追加しました。',
     shelf_group_filter_label: 'グループ',
     shelf_could_not_load: '読み込めませんでした。接続を確認してもう一度お試しください。',
+    shelf_all_books: 'すべての本',
+    shelf_search_placeholder: 'タイトル・著者・借りている人で検索',
+    shelf_no_match: '検索条件に一致する本がありません。',
+    shelf_show_more_btn: 'もっと見る',
+    shelf_status_out: '貸出中',
+    shelf_status_awaiting: '承認待ち',
+    shelf_status_on_shelf: '棚にあります',
     shelf_enter_title: 'タイトルを入力してください。',
     shelf_add_fail: '本を追加できませんでした。接続を確認してもう一度お試しください。',
+    cover_tap_hint: 'タップで撮影します',
     cover_crop_hint: '写真の中の{target}を枠で囲んでください。',
     cover_crop_too_small: '先にテキストの範囲を枠で囲んでください。',
     cover_loading_scanner: '文字認識を読み込み中（初回は言語データをダウンロードします）…',
@@ -2147,9 +2187,52 @@ async function loadShelf(){
     bookCache = data.books || [];
     const borrowed = bookCache.filter(b=>b.Status==='Borrowed').length;
     countEl.textContent = t('shelf_count', { n: bookCache.length, m: borrowed });
+    shelfListLimit_ = SHELF_PAGE_SIZE; // start back at page 1 on every fresh load
+    renderBookList();
   }catch(e){
     countEl.textContent = t('shelf_could_not_load');
   }
+}
+
+const SHELF_PAGE_SIZE = 100;
+let shelfListLimit_ = SHELF_PAGE_SIZE; // how many of the filtered/searched matches to render — grown by showMoreShelfBooks_()
+
+function onShelfSearchInput_(){
+  shelfListLimit_ = SHELF_PAGE_SIZE; // a new search starts back at page 1
+  renderBookList();
+}
+
+function showMoreShelfBooks_(){
+  shelfListLimit_ += SHELF_PAGE_SIZE;
+  renderBookList();
+}
+
+function renderBookList(){
+  const listEl = document.getElementById('bookList');
+  const moreBtn = document.getElementById('shelfShowMoreBtn');
+  const q = (document.getElementById('shelfSearch').value || '').trim().toLowerCase();
+  const filtered = bookCache.filter(b => {
+    if(!q) return true;
+    return String(b.Title||'').toLowerCase().includes(q) ||
+      String(b.Author||'').toLowerCase().includes(q) ||
+      String(b.BorrowerName||'').toLowerCase().includes(q);
+  });
+  const visible = filtered.slice(0, shelfListLimit_);
+  listEl.innerHTML = visible.map(b=>{
+    const pillClass = b.Status==='Borrowed' ? 'borrowed' : (b.Status==='Pending' ? 'pending' : 'avail');
+    const pillLabel = b.Status==='Borrowed' ? t('shelf_status_out') : (b.Status==='Pending' ? t('shelf_status_awaiting') : t('shelf_status_on_shelf'));
+    const groupSub = b.Group ? ' · ' + escapeHtml(b.Group) : '';
+    const sub = (b.Status==='Borrowed' || b.Status==='Pending') ? ' · ' + escapeHtml(b.BorrowerName||'') : '';
+    return `
+    <div class="book-row">
+      <div class="meta">
+        <div class="title">${escapeHtml(b.Title)}</div>
+        <div class="sub">${escapeHtml(b.ItemID)}${groupSub}${sub}</div>
+      </div>
+      <span class="status-pill ${pillClass}">${escapeHtml(pillLabel)}</span>
+    </div>`;
+  }).join('') || '<p style="opacity:0.6;font-size:13px;">'+escapeHtml(t('shelf_no_match'))+'</p>';
+  if(moreBtn) moreBtn.style.display = filtered.length > visible.length ? '' : 'none';
 }
 
 // Groups themselves come from the Config tab (BookGroups), not something
@@ -2416,6 +2499,33 @@ function loadTesseract(){
   });
 }
 
+let coverOcrWorker_ = null; // lazily created, kept alive across scans — the one-shot Tesseract.recognize() helper re-downloads/re-inits the language data every call and also has no way to pass per-call Tesseract parameters (e.g. user_defined_dpi below)
+async function getCoverOcrWorker_(){
+  if(coverOcrWorker_) return coverOcrWorker_;
+  const Tesseract = await loadTesseract();
+  coverOcrWorker_ = await Tesseract.createWorker('jpn+eng');
+  return coverOcrWorker_;
+}
+
+// Tesseract reads small/blurry phone-camera crops poorly, and dense CJK
+// glyphs suffer from this far more than Latin text — scale the crop up
+// so its shorter side is a few hundred pixels before handing it over,
+// which measurably helps Japanese recognition in particular.
+function upscaleForOcr_(canvas){
+  const targetMinSide = 600;
+  const minSide = Math.min(canvas.width, canvas.height);
+  if(minSide >= targetMinSide) return canvas;
+  const scale = targetMinSide / minSide;
+  const scaled = document.createElement('canvas');
+  scaled.width = Math.round(canvas.width * scale);
+  scaled.height = Math.round(canvas.height * scale);
+  const ctx = scaled.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(canvas, 0, 0, scaled.width, scaled.height);
+  return scaled;
+}
+
 let coverScanTarget_ = null; // 'title' | 'author' — which field the open camera preview is scanning for
 let coverScanStream_ = null; // MediaStream to stop once done, so the camera light actually turns off
 let coverCropTarget_ = null; // same as coverScanTarget_, but kept alive through the crop step since stopCoverScan() (called right after Capture) clears coverScanTarget_
@@ -2434,14 +2544,14 @@ async function startCoverScan(target){
   const video = document.getElementById('coverVideo');
   const statusEl = document.getElementById('ocrStatus');
   statusEl.textContent = '';
-  wrap.style.display = 'block';
+  wrap.classList.add('show');
   try{
     coverScanStream_ = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
     video.srcObject = coverScanStream_;
     await video.play();
   }catch(e){
     statusEl.textContent = t('cover_camera_fail', { err: e });
-    wrap.style.display = 'none';
+    wrap.classList.remove('show');
     coverScanTarget_ = null;
   }
 }
@@ -2452,8 +2562,8 @@ async function startCoverScan(target){
 // live camera. captureCoverFrame() calls this and then immediately sets
 // the crop state back up, so that ordering still works.
 function stopCoverScan(){
-  document.getElementById('coverReaderWrap').style.display = 'none';
-  document.getElementById('coverCropWrap').style.display = 'none';
+  document.getElementById('coverReaderWrap').classList.remove('show');
+  document.getElementById('coverCropWrap').classList.remove('show');
   if(coverScanStream_){
     coverScanStream_.getTracks().forEach(t => t.stop());
     coverScanStream_ = null;
@@ -2487,7 +2597,7 @@ function showCoverCrop_(){
   // to adjust rather than framing a box from nothing.
   coverCropRect_ = { x: 0.1, y: 0.4, w: 0.8, h: 0.2 };
   renderCoverCropBox_();
-  document.getElementById('coverCropWrap').style.display = 'block';
+  document.getElementById('coverCropWrap').classList.add('show');
 }
 
 function renderCoverCropBox_(){
@@ -2531,7 +2641,7 @@ function coverCropPosFromEvent_(e){
 })();
 
 function retakeCoverCrop(){
-  document.getElementById('coverCropWrap').style.display = 'none';
+  document.getElementById('coverCropWrap').classList.remove('show');
   coverCaptureCanvas_ = null;
   coverCropRect_ = null;
   startCoverScan(coverCropTarget_);
@@ -2546,7 +2656,7 @@ async function confirmCoverCrop(){
     statusEl.textContent = t('cover_crop_too_small');
     return;
   }
-  document.getElementById('coverCropWrap').style.display = 'none';
+  document.getElementById('coverCropWrap').classList.remove('show');
   const cropped = document.createElement('canvas');
   cropped.width = Math.round(rect.w * source.width);
   cropped.height = Math.round(rect.h * source.height);
@@ -2560,9 +2670,12 @@ async function confirmCoverCrop(){
   statusEl.textContent = t('cover_loading_scanner');
   const targetLabel = t(target === 'title' ? 'target_title' : 'target_author');
   try{
-    const Tesseract = await loadTesseract();
+    const worker = await getCoverOcrWorker_();
     statusEl.textContent = t('cover_reading', { target: targetLabel });
-    const { data } = await Tesseract.recognize(cropped, 'jpn+eng');
+    // user_defined_dpi: a canvas crop carries no DPI metadata, so without
+    // this Tesseract falls back to guessing (logging "Invalid resolution
+    // 0 dpi") — telling it the real-ish DPI avoids that guess penalty.
+    const { data } = await worker.recognize(upscaleForOcr_(cropped), { user_defined_dpi: '300' });
     // The box is already framed around just the wanted text, so (unlike
     // a whole-cover shot) there's no need to guess which line it is —
     // just take whatever text came back.
