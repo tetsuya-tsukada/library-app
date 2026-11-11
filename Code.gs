@@ -655,7 +655,11 @@ const PRINT_LABELS_HTML = `<!DOCTYPE html>
   body.mode-tape .lab .qr{width:20mm;height:20mm;flex:0 0 auto;}
   body.mode-tape .lab .qr canvas, body.mode-tape .lab .qr img{width:100% !important;height:100% !important;}
   body.mode-tape .lab .text{display:flex;flex-direction:column;justify-content:center;margin-left:2mm;max-width:40mm;overflow:hidden;}
-  body.mode-tape .lab .t{font-size:3mm;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0 0 0.8mm;text-align:left;}
+  body.mode-tape .lab .t{
+    font-size:2.6mm;line-height:1.15;margin:0 0 0.8mm;text-align:left;
+    display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;
+    overflow:hidden;overflow-wrap:break-word;
+  }
   body.mode-tape .lab .i{font-size:2.4mm;text-align:left;}
   @media print { .toolbar{ display:none; } }
 </style>
