@@ -1743,6 +1743,7 @@ async function lookupAndQueueScan_(itemId){
         : ACTING_AS ? ACTING_AS
         : { name: USER.name, contact: USER.contact };
       addToQueue_(itemId, data.title, 'return', placeholder.name, placeholder.contact);
+      autoStopAfterScan_ = true;
     }
   }catch(e){
     flashScanNote_(t('scan_network_fail_item', { itemId }));
