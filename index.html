@@ -485,7 +485,7 @@ const I18N = {
     scan_camera_fail: 'Camera access failed: {err}',
     scan_already_queued: 'Already queued: {itemId}',
     scan_awaiting_approval: '"{title}" is already awaiting approval.',
-    scan_family_limit_reached: '{name} has reached the borrow limit ({max}). Return a book, or pick someone else next round.',
+    scan_family_limit_reached: '{name} has reached the borrow limit ({max}). Tap "Scan more" to pick another family member.',
     scan_admin_no_own_name: "Find the patron first — Users tab → \"Use for scan\". Admins can't borrow under their own name.",
     scan_network_fail_item: 'Could not reach the sheet for {itemId}.',
     who_borrowing_round: "Who's borrowing this round?",
@@ -664,7 +664,7 @@ const I18N = {
     scan_camera_fail: 'カメラにアクセスできませんでした: {err}',
     scan_already_queued: '既に登録済み: {itemId}',
     scan_awaiting_approval: '「{title}」はすでに承認待ちです。',
-    scan_family_limit_reached: '{name}は貸出上限（{max}冊）に達しています。本を返却するか、次回は別の人を選んでください。',
+    scan_family_limit_reached: '{name}は貸出上限（{max}冊）に達しています。「スキャン追加」で別の家族を選んでください。',
     scan_admin_no_own_name: '先に利用者を検索してください（「スキャンに使用」）。管理者は自分の名前で借りることはできません。',
     scan_network_fail_item: '{itemId} の情報をシートから取得できませんでした。',
     who_borrowing_round: '今回は誰が借りますか？',
@@ -1512,7 +1512,10 @@ async function processPendingScans_(){
   scanProcessing = false;
   updateScanBtnProcessingState_();
   if(autoStopAfterScan_ && scanning){
-    const skipScanMore = autoStopIsLimit_;
+    // For a family session, hitting one member's limit doesn't mean done —
+    // keep "Scan more" so the admin can pick another family member.
+    const isFamily = !!(ACTING_AS && ACTING_AS.children);
+    const skipScanMore = autoStopIsLimit_ && !isFamily;
     autoStopAfterScan_ = false;
     autoStopIsLimit_ = false;
     await stopScanningSession(skipScanMore);
