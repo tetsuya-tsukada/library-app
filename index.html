@@ -948,6 +948,8 @@ let unassignedBorrows = []; // { itemId, title } — borrows scanned by a parent
 let pendingScans = []; // itemIds waiting to be looked up (fed from onScanSuccess faster than we can process)
 let processingItemId = null; // itemId currently mid-lookup, so repeat frames of it are ignored
 let scanProcessing = false; // true while the pendingScans drain loop is running
+let preScanLoanCount_ = null; // active loan count fetched before scanning — used to detect when queued borrows hit the limit
+let autoStopAfterScan_ = false; // set mid-scan when a borrow hits the limit; triggers stopScanningSession once the pending queue drains
 let familyRoundMember_ = null; // { name, contact, activeCount } — who an admin's current scanning round is for, when acting as a family (see currentFamily_/promptFamilyRoundMember_); reset each round so the next one asks again
 // True only while promptFamilyRoundMember_'s picker is actually on
 // screen awaiting a tap. Deliberately separate from familyRoundMember_
@@ -1172,6 +1174,8 @@ function resetScanResult_(){
   pendingScans = [];
   processingItemId = null;
   scanProcessing = false;
+  preScanLoanCount_ = null;
+  autoStopAfterScan_ = false;
   renderScanQueue();
   const area = document.getElementById('resultArea');
   if(area) area.innerHTML = '';
@@ -1495,6 +1499,8 @@ async function stopScanningSession(){
   // without this, we could decide what to show next before those land in
   // scanQueue/unassignedBorrows, undercounting either one.
   await waitForScansToSettle_();
+  preScanLoanCount_ = null;
+  autoStopAfterScan_ = false;
   updateScanIdentityBanner();
   if(unassignedBorrows.length){
     // Only ever populated by a real parent USER session, which batches
@@ -1618,6 +1624,7 @@ async function showBorrowCountFor_(name, spanId){
     : (USER && USER.matchType === 'individual') ? USER.name
     : null;
   if(currentName !== name) return;
+  preScanLoanCount_ = count;
   const max = CONFIG.maxBorrowItems || 4;
   const atLimit = count >= max;
   span.textContent = t('scan_count_suffix', { count, max }) + (atLimit ? t('limit_reached_suffix') : '');
@@ -1660,6 +1667,10 @@ async function processPendingScans_(){
   }
   scanProcessing = false;
   updateScanBtnProcessingState_();
+  if(autoStopAfterScan_ && scanning){
+    autoStopAfterScan_ = false;
+    await stopScanningSession();
+  }
 }
 
 // Disables "Done scanning" for as long as a just-scanned book is still
@@ -1699,6 +1710,7 @@ async function lookupAndQueueScan_(itemId){
           flashScanNote_(t('scan_family_limit_reached', { name: familyRoundMember_.name, max }));
         } else {
           addToQueue_(itemId, data.title, 'borrow', familyRoundMember_.name, familyRoundMember_.contact);
+          if((familyRoundMember_.activeCount || 0) + scanQueue.filter(q => q.action === 'borrow' && q.name === familyRoundMember_.name).length >= max) autoStopAfterScan_ = true;
         }
       } else if(realParentFamily){
         // Don't interrupt scanning to ask who this is for — that's
@@ -1708,6 +1720,10 @@ async function lookupAndQueueScan_(itemId){
         renderScanQueue();
       } else if(ACTING_AS){
         addToQueue_(itemId, data.title, 'borrow', ACTING_AS.name, ACTING_AS.contact);
+        if(preScanLoanCount_ !== null){
+          const max = CONFIG.maxBorrowItems || 4;
+          if(preScanLoanCount_ + scanQueue.filter(q => q.action === 'borrow' && q.name === ACTING_AS.name).length >= max) autoStopAfterScan_ = true;
+        }
       } else if(USER.matchType === 'admin'){
         // Only people on the User List can borrow — an admin isn't one,
         // so borrowing under their own admin identity isn't allowed.
@@ -1716,6 +1732,10 @@ async function lookupAndQueueScan_(itemId){
         flashScanNote_(t('scan_admin_no_own_name'));
       } else {
         addToQueue_(itemId, data.title, 'borrow', USER.name, USER.contact);
+        if(preScanLoanCount_ !== null){
+          const max = CONFIG.maxBorrowItems || 4;
+          if(preScanLoanCount_ + scanQueue.filter(q => q.action === 'borrow' && q.name === USER.name).length >= max) autoStopAfterScan_ = true;
+        }
       }
     } else { // Borrowed
       const placeholder = isAdminFamily ? familyRoundMember_
