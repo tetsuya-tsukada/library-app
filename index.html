@@ -1808,15 +1808,25 @@ function assignUnassignedBorrows_(name, contact){
 // after scanning for a child) before reviewing everything together.
 function renderScanMoreOrReview_(){
   const area = document.getElementById('resultArea');
+  const borrowCount = scanQueue.filter(q=>q.action==='borrow').length;
+  const returnCount = scanQueue.filter(q=>q.action==='return').length;
+  let headline;
+  if(borrowCount && returnCount) headline = t('borrow_x_return_y', { b: borrowCount, r: returnCount });
+  else if(borrowCount) headline = t('borrow_x_items', { n: borrowCount });
+  else headline = t('return_x_items', { n: returnCount });
   area.innerHTML = `
     <div class="stamp-card">
-      <div class="eyebrow">${escapeHtml(t('nice_work'))}</div>
-      <h2>${escapeHtml(t('items_so_far', { count: scanQueue.length }))}</h2>
-      <button class="btn btn-primary" id="scanMoreBtn">${escapeHtml(t('scan_more_btn'))}</button>
-      <button class="btn btn-outline" style="margin-top:10px;" id="reviewQueueBtn">${escapeHtml(t('review_confirm_btn'))}</button>
+      <div class="eyebrow">${escapeHtml(t('confirm_eyebrow'))}</div>
+      <h2>${escapeHtml(headline)}</h2>
+      <div id="confirmList" style="margin:10px 0;"></div>
+      <button class="btn btn-primary" id="confirmQueueBtn">${escapeHtml(t('confirm_btn'))}</button>
+      <button class="btn btn-outline" style="margin-top:10px;" id="scanMoreBtn">${escapeHtml(t('scan_more_btn'))}</button>
+      <button class="btn btn-outline" style="margin-top:10px;" id="cancelQueueBtn">${escapeHtml(t('cancel_btn'))}</button>
     </div>`;
+  document.getElementById('confirmList').innerHTML = scanQueue.map(q => `<div class="detail-row"><span>${escapeHtml(t(q.action==='borrow'?'borrow_label':'return_label'))}</span><span>${escapeHtml(q.title)}</span></div>`).join('');
+  document.getElementById('confirmQueueBtn').onclick = commitScanQueue;
   document.getElementById('scanMoreBtn').onclick = () => { area.innerHTML = ''; toggleScanner(); };
-  document.getElementById('reviewQueueBtn').onclick = renderQueueConfirmation;
+  document.getElementById('cancelQueueBtn').onclick = () => { scanQueue = []; unassignedBorrows = []; renderScanQueue(); area.innerHTML = ''; };
 }
 
 function addToQueue_(itemId, title, action, name, contact){
