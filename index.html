@@ -2420,10 +2420,11 @@ function renderSummaryDetail(key, label){
       </div>`).join('');
 }
 
-function actAsUser(user){
+async function actAsUser(user){
   ACTING_AS = { name: user.name, contact: contactOf_(user) };
   resetScanResult_();
   showScreen('scan');
+  await beginScanningSession_();
 }
 
 // Acting as a whole family (a parent group) instead of one flat
