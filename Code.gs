@@ -10,7 +10,7 @@
  *    sheet, you can leave SHEET_ID as '' — it will use the active sheet).
  * 5. Run `setupSheets` from the editor (select it in the function
  *    dropdown, click Run). This creates the Books, Transactions, Admins,
- *    Approvals, and User List tabs with the right headers. Approve the
+ *    and User List tabs with the right headers. Approve the
  *    permissions prompt. Safe to run again any time (e.g. after pasting
  *    in an updated version of this file) — it only creates whatever's
  *    missing and never clears a tab that already has data in it.
@@ -28,30 +28,23 @@
  *    their email in column A — this must be the exact same email as
  *    that admin's row in User List, since that's what they'll sign in
  *    with.
- * 8. Run `installApprovalTrigger` once from the editor. This lets the
- *    script notice when an admin changes a cell in the Approvals tab.
- * 9. Share the Sheet directly with each admin's Google account (Editor
- *    access). Admin approval enforcement (when approving via the Sheet
- *    itself, not the web app) identifies approvers by their signed-in
- *    Google email, so it will not work if the sheet is shared via an
- *    "anyone with the link can edit" link instead of named accounts.
- * 10. Deploy > New deployment > type: Web app.
+ * 8. Deploy > New deployment > type: Web app.
  *      - Execute as: Me
  *      - Who has access: Anyone
- * 11. Copy the Web app URL — paste it into index.html's DEFAULT_API_URL
+ * 9. Copy the Web app URL — paste it into index.html's DEFAULT_API_URL
  *    constant (there's no in-app Settings screen; the URL is hardcoded).
- * 12. Add your books: run addBook manually a few times, OR just type
+ * 10. Add your books: run addBook manually a few times, OR just type
  *    rows directly into the Books tab (ItemID / Title / Author),
  *    leave Status blank — the app treats blank Status as Available. The
  *    Group column (right after Author) is optional and not something
  *    the app's own "Add books" form ever asks for — it's meant to be
  *    filled in (or bulk-edited) directly in the Sheet, from the
- *    dropdown described in step 13's BookGroups row, purely so an admin
+ *    dropdown described in step 11's BookGroups row, purely so an admin
  *    can see borrowing trends by category later (Shelf tab in the app
  *    can filter by it). If you have an existing Books tab from before
  *    this column existed, run `migrateBooksAddGroupColumn_` once first
  *    — see that function's comment.
- * 13. Run `setupConfigSheet` once. This creates a Config tab (Key/Value
+ * 11. Run `setupConfigSheet` once. This creates a Config tab (Key/Value
  *    columns) pre-filled with a LoanDays row (default 14), a
  *    MaxBorrowItems row (default 4), an AdminSecret row (default
  *    "changeme" — change this immediately, it's the shared admin
@@ -59,24 +52,18 @@
  *    change this immediately too, see "HOW SITE ACCESS WORKS" below), a
  *    SiteAccessTTLHours row (default 24), a SiteUrl row (your GitHub
  *    Pages URL, e.g. https://youruser.github.io/library-app/ — update
- *    it if you ever move the app to a different URL), a
- *    PatronLoginEnabled row (default TRUE — set to FALSE to hide the
- *    patron sign-in search box from the landing page entirely, leaving
- *    only Admin login, for a rollout where only admins use the app at
- *    first; this is a UI-level toggle only, not a security boundary,
- *    same as the rest of the app's client-side role gating), and a
- *    BookGroups row (default "Fiction, Non-fiction, Picture Books,
- *    Reference" — a comma-separated list that becomes both the Books
- *    tab's Group column dropdown and the app's Shelf-tab Group filter;
- *    edit it any time, then run the 📚 Library menu's "Refresh book
- *    Group dropdown" item to update the Sheet-side dropdown to match).
- *    Edit any of these any time — the app reads this tab on every load,
- *    so there's no code change or redeploy needed to update them.
- *    Changing LoanDays changes the default due date for future
- *    approvals only, not books already borrowed. Changing
- *    MaxBorrowItems changes how many books someone can have Borrowed or
- *    Pending at once before new borrow requests are rejected.
- * 14. Reload the Google Sheet tab in your browser. A "📚 Library" menu
+ *    it if you ever move the app to a different URL), and a BookGroups
+ *    row (default "Fiction, Non-fiction, Picture Books, Reference" — a
+ *    comma-separated list that becomes both the Books tab's Group column
+ *    dropdown and the app's Shelf-tab Group filter; edit it any time,
+ *    then run the 📚 Library menu's "Refresh book Group dropdown" item to
+ *    update the Sheet-side dropdown to match). Edit any of these any
+ *    time — the app reads this tab on every load, so there's no code
+ *    change or redeploy needed to update them. Changing LoanDays changes
+ *    the default due date for future borrows only, not books already
+ *    borrowed. Changing MaxBorrowItems changes how many books someone
+ *    can have Borrowed at once before new borrow requests are rejected.
+ * 12. Reload the Google Sheet tab in your browser. A "📚 Library" menu
  *    appears next to Help — use its "Print QR labels" item any time to
  *    generate a printable label sheet (title, item ID, and a scannable
  *    QR code per book) right from the Sheet. This does not require the
@@ -87,7 +74,7 @@
  *    to print labels for just those books — handy when you've added a
  *    few new ones and don't want to reprint the whole catalog. With
  *    nothing meaningfully selected, it prints every book.
- * 15. Once you've changed SiteAccessCode to something real, use the same
+ * 13. Once you've changed SiteAccessCode to something real, use the same
  *    "📚 Library" menu's "Print site access QR code" item, print it, and
  *    post it only somewhere that already requires physical presence to
  *    reach — e.g. inside the library room itself. See "HOW SITE ACCESS
@@ -149,9 +136,9 @@
  *   under their own name) or pick a specific child — each borrow scan
  *   asks which one it's for.
  * - Since matching is loose, there's no separate "is this really you"
- *   gate at patron sign-in — the safeguard against someone picking the
- *   wrong or someone else's name is the existing borrow-approval step
- *   below, which every borrow request already goes through regardless.
+ *   gate — only admins can initiate scans (see "HOW ADMIN LOGIN WORKS"
+ *   below), so the admin doing the scanning is the safeguard against
+ *   picking the wrong name.
  * - Admins do NOT sign in this way. Patron sign-in never grants admin
  *   access, even for a listed admin email — see "HOW ADMIN LOGIN
  *   WORKS" below.
@@ -173,37 +160,6 @@
  *   Script's execution logs, not a true secret channel), just a
  *   meaningfully higher bar than "type an email you happen to know."
  *
- * HOW APPROVAL WORKS:
- * - When someone scans an available book to borrow it, the book's
- *   Status becomes "Pending" and a row is added to the Approvals tab
- *   with Decision = "Pending" — unless that person already has
- *   MaxBorrowItems books Borrowed or Pending, in which case the scan is
- *   rejected up front.
- * - An admin opens the Approvals tab and changes that row's Decision
- *   cell to "Approve" or "Deny" (it's a dropdown). To hand out a
- *   non-default due date, type a date into that row's CustomDueDate
- *   column before switching Decision to Approve. Same thing is
- *   possible from the web app's Approvals screen, which shows an
- *   editable due-date field next to each request's Approve button
- *   (bulk "Approve all" always uses the default, per-row overrides
- *   only apply one at a time).
- * - The script checks the editor's email against the Admins tab. If
- *   they're not listed, the edit is reverted and nothing happens.
- * - If approved, the book becomes "Borrowed" with a due date — a
- *   CustomDueDate if one was given, otherwise today + the Config tab's
- *   LoanDays. If denied, the book goes back to "Available". Either way
- *   the scanning app — which polls automatically — updates within a
- *   few seconds.
- * - Returning a borrowed book is immediate and never needs approval,
- *   and is never blocked by the borrow limit.
- * - Exception: when an admin (signed in through the separate admin
- *   login) is the one doing the scanning — whether for themself or,
- *   via the Users screen's "Use for scan", on behalf of a patron they
- *   looked up — the borrow is approved immediately instead of going
- *   to Pending. An admin scanning a book is already the same
- *   authority that would otherwise approve it moments later, so
- *   there's no separate approval step to skip. The borrow limit
- *   check still applies.
  * -----------------------------------------------------
  */
 
@@ -211,13 +167,11 @@ const SHEET_ID = ''; // leave blank if script is bound to the sheet
 const BOOKS_SHEET = 'Books';
 const TX_SHEET = 'Transactions';
 const ADMINS_SHEET = 'Admins';
-const APPROVALS_SHEET = 'Approvals';
 const CONFIG_SHEET = 'Config';
 const USERS_SHEET = 'User List';
 const LOAN_DAYS = 14;
 const MAX_BORROW_ITEMS = 4;
 const SITE_ACCESS_TTL_HOURS = 24;
-const APPROVAL_DECISION_COL = 7; // Approvals sheet: column G
 // Books sheet column layout: ItemID, Title, Author, Group, Status,
 // BorrowerName, BorrowerContact, BorrowDate, DueDate, BorrowCount,
 // AddedBy. Group sits right after Author (see
@@ -280,25 +234,13 @@ function setupSheets() {
   // Every tab here is safe to re-run: existing sheets are never
   // cleared, only created (and headers self-healed) if missing — so
   // running setupSheets again never wipes your books, transaction
-  // history, admin list, approvals, or roster.
+  // history, admin list, or roster.
   let admins = ss.getSheetByName(ADMINS_SHEET);
   if (!admins) {
     admins = ss.insertSheet(ADMINS_SHEET);
     admins.appendRow(['Email', 'Name']);
     admins.setFrozenRows(1);
   }
-
-  let approvals = ss.getSheetByName(APPROVALS_SHEET);
-  if (!approvals) {
-    approvals = ss.insertSheet(APPROVALS_SHEET);
-    approvals.appendRow(['RequestID', 'Timestamp', 'ItemID', 'Title', 'RequesterName', 'RequesterContact', 'Decision', 'DecidedBy', 'DecidedAt', 'CustomDueDate']);
-    approvals.setFrozenRows(1);
-  } else if (String(approvals.getRange(1, 10).getValue()).trim() !== 'CustomDueDate') {
-    // Existing tab from before CustomDueDate existed — add the header
-    // without touching any existing rows.
-    approvals.getRange(1, 10).setValue('CustomDueDate');
-  }
-  applyApprovalValidation_(approvals, 2, 1000);
 
   let users = ss.getSheetByName(USERS_SHEET);
   if (!users) {
@@ -419,14 +361,6 @@ function migrateUserListSchema() {
   throw new Error('User List header does not match the expected old or new schema — check it by hand before migrating.');
 }
 
-function applyApprovalValidation_(sh, startRow, numRows) {
-  const rule = SpreadsheetApp.newDataValidation()
-    .requireValueInList(['Pending', 'Approve', 'Deny'], true)
-    .setAllowInvalid(false)
-    .build();
-  sh.getRange(startRow, APPROVAL_DECISION_COL, numRows, 1).setDataValidation(rule);
-}
-
 // Safe to run any time, including after books/transactions already have
 // data — unlike setupSheets, this never clears an existing sheet.
 function setupConfigSheet() {
@@ -454,7 +388,6 @@ function setupConfigSheet() {
     SiteAccessCode: 'changeme-site-code',
     SiteAccessTTLHours: String(SITE_ACCESS_TTL_HOURS),
     SiteUrl: 'https://tetsuya-tsukada.github.io/library-app/',
-    PatronLoginEnabled: 'TRUE',
     BookGroups: 'Fiction, Non-fiction, Picture Books, Reference'
   };
   Object.keys(defaults).forEach(key => {
@@ -538,7 +471,7 @@ function verifySiteCode(code) {
 // ever hand back this filtered subset instead.
 function getPublicConfig() {
   const cfg = getConfig();
-  return { LoanDays: cfg.LoanDays, MaxBorrowItems: cfg.MaxBorrowItems, PatronLoginEnabled: cfg.PatronLoginEnabled, BookGroups: cfg.BookGroups || '' };
+  return { LoanDays: cfg.LoanDays, MaxBorrowItems: cfg.MaxBorrowItems, BookGroups: cfg.BookGroups || '' };
 }
 
 function getConfig() {
@@ -555,17 +488,6 @@ function getConfig() {
     if (key) cfg[key] = data[i][1];
   }
   return cfg;
-}
-
-function installApprovalTrigger() {
-  const ss = getSS();
-  ScriptApp.getProjectTriggers().forEach(t => {
-    if (t.getHandlerFunction() === 'onApprovalEdit') ScriptApp.deleteTrigger(t);
-  });
-  ScriptApp.newTrigger('onApprovalEdit')
-    .forSpreadsheet(ss)
-    .onEdit()
-    .create();
 }
 
 // Simple trigger — runs automatically whenever the Sheet is opened, no
@@ -871,9 +793,6 @@ function doGet(e) {
         case 'getSummary':
           result = getSummary(e.parameter.adminEmail);
           break;
-        case 'checkApproval':
-          result = checkApproval(e.parameter.requestId);
-          break;
         case 'getConfig':
           result = getPublicConfig();
           break;
@@ -885,15 +804,6 @@ function doGet(e) {
           break;
         case 'verifyAdmin':
           result = verifyAdmin(e.parameter.email);
-          break;
-        case 'listApprovals':
-          result = listPendingApprovals(e.parameter.adminEmail);
-          break;
-        case 'approveRequest':
-          result = approveRequest(e.parameter.requestId, e.parameter.decision || 'Approve', e.parameter.adminEmail, e.parameter.dueDate);
-          break;
-        case 'approveAll':
-          result = approveAllPending(e.parameter.adminEmail);
           break;
         case 'verifySiteCode':
           result = verifySiteCode(e.parameter.code);
@@ -948,11 +858,6 @@ function lookupBook(itemId) {
   };
 }
 
-// adminEmail (optional): when set and listed in the Admins tab, a borrow is
-// approved immediately instead of going to Pending — an admin scanning a
-// book (for themself or, via "Use for scan", for a patron they looked up)
-// is already the same authority that would otherwise approve it a moment
-// later, so the extra Pending round-trip is just friction.
 function scanBook(itemId, name, contact, adminEmail) {
   if (!itemId) return { error: 'Missing itemId' };
   const { sh, data } = getBooksSheet_();
@@ -963,32 +868,19 @@ function scanBook(itemId, name, contact, adminEmail) {
   const currentStatus = data[row][4] || 'Available';
   const now = new Date();
   const rowNum = row + 1; // 1-indexed for sheet API
-  const isAdminScan = !!adminEmail && isAdmin_(adminEmail);
 
   if (currentStatus === 'Available') {
-    // BORROW REQUEST — locks the book as Pending until an admin approves it
-    // (skipped entirely for an admin-initiated scan, see isAdminScan above)
     if (!name) return { error: 'Name required to borrow' };
     const maxItems = getMaxBorrowItems_();
     const activeCount = countActiveLoans_(name);
     if (activeCount >= maxItems) {
       return { error: 'Borrow limit reached (' + maxItems + ' items). Return a book before borrowing another.' };
     }
-    if (isAdminScan) {
-      const due = new Date(now.getTime() + getLoanDays_() * 24 * 60 * 60 * 1000);
-      sh.getRange(rowNum, 5, 1, 5).setValues([['Borrowed', name, contact || '', now, due]]);
-      logTx_(itemId, title, 'Borrow', name, contact);
-      incrementBorrowCount_(sh, rowNum);
-      return { action: 'borrow', itemId, title, borrowerName: name, dueDate: due };
-    }
-    const requestId = itemId + '-' + now.getTime();
-    sh.getRange(rowNum, 5, 1, 5).setValues([['Pending', name, contact || '', now, '']]);
-    appendApprovalRequest_(requestId, itemId, title, name, contact);
-    return { action: 'pending', itemId, title, requestId };
-  } else if (currentStatus === 'Pending') {
-    // Already awaiting approval — hand back the existing request so the app can keep polling it
-    const requestId = findPendingRequestId_(itemId);
-    return { action: 'pending', itemId, title, requestId };
+    const due = new Date(now.getTime() + getLoanDays_() * 24 * 60 * 60 * 1000);
+    sh.getRange(rowNum, 5, 1, 5).setValues([['Borrowed', name, contact || '', now, due]]);
+    logTx_(itemId, title, 'Borrow', name, contact);
+    incrementBorrowCount_(sh, rowNum);
+    return { action: 'borrow', itemId, title, borrowerName: name, dueDate: due };
   } else {
     // RETURN — always immediate, never needs approval
     const prevName = data[row][5];
@@ -999,19 +891,14 @@ function scanBook(itemId, name, contact, adminEmail) {
   }
 }
 
-// Same per-item borrow/return/pending rules as scanBook above, but for a
-// whole batch of scans (see index.html's commitScanQueue/
-// commitReturnQueue) in one shot. Scanning several books used to mean one
-// full Books-sheet read plus one write (plus another read inside
-// countActiveLoans_) per book — each a separate round trip to the Sheets
-// service, which is the slow part, not the lookup logic itself. This
-// reads the sheet once, applies every item to the in-memory data, then
-// writes back only the rows that actually changed (grouped into
+// Same per-item borrow/return rules as scanBook above, but for a whole
+// batch of scans (see index.html's commitScanQueue/commitReturnQueue) in
+// one shot. Reads the sheet once, applies every item to the in-memory
+// data, then writes back only the rows that actually changed (grouped into
 // contiguous runs so a batch of adjacent rows is still just one write) —
-// never touching rows this batch didn't modify, so a concurrent edit to
-// some other book isn't clobbered by a stale re-write of the whole sheet.
-// Transactions/Approvals rows are appended the same way: one batched
-// append each instead of one per item.
+// never touching rows this batch didn't modify.
+// Transactions rows are appended in one batched write instead of one per
+// item.
 function scanBookBatch(itemsJson, adminEmail) {
   let items;
   try {
@@ -1023,7 +910,6 @@ function scanBookBatch(itemsJson, adminEmail) {
 
   const { sh, data } = getBooksSheet_();
   const now = new Date();
-  const isAdminScan = !!adminEmail && isAdmin_(adminEmail);
   const maxItems = getMaxBorrowItems_();
 
   // Running in-memory active-loan counts per name, seeded from the sheet
@@ -1034,14 +920,13 @@ function scanBookBatch(itemsJson, adminEmail) {
   for (let i = 1; i < data.length; i++) {
     const status = data[i][4];
     const bName = String(data[i][5] || '').trim().toLowerCase();
-    if ((status === 'Borrowed' || status === 'Pending') && bName) {
+    if (status === 'Borrowed' && bName) {
       activeCounts[bName] = (activeCounts[bName] || 0) + 1;
     }
   }
 
   const touchedRows = []; // indices into `data` whose columns E:J changed
   const txRows = [];
-  const approvalRows = [];
   const results = [];
 
   items.forEach(item => {
@@ -1062,28 +947,15 @@ function scanBookBatch(itemsJson, adminEmail) {
         return;
       }
       activeCounts[key] = activeCount + 1;
-      if (isAdminScan) {
-        const due = new Date(now.getTime() + getLoanDays_() * 24 * 60 * 60 * 1000);
-        data[row][4] = 'Borrowed'; data[row][5] = name; data[row][6] = contact || '';
-        data[row][7] = now; data[row][8] = due;
-        data[row][9] = (parseInt(data[row][9], 10) || 0) + 1;
-        touchedRows.push(row);
-        txRows.push([now, itemId, title, 'Borrow', name, contact]);
-        results.push({ action: 'borrow', itemId, title, borrowerName: name, dueDate: due });
-      } else {
-        const requestId = itemId + '-' + now.getTime() + '-' + Math.floor(Math.random() * 1000);
-        data[row][4] = 'Pending'; data[row][5] = name; data[row][6] = contact || '';
-        data[row][7] = now; data[row][8] = '';
-        touchedRows.push(row);
-        approvalRows.push([requestId, now, itemId, title, name, contact || '', 'Pending', '', '', '']);
-        results.push({ action: 'pending', itemId, title, requestId });
-      }
-    } else if (currentStatus === 'Pending') {
-      // Already awaiting approval — hand back the existing request so the app can keep polling it
-      const requestId = findPendingRequestId_(itemId);
-      results.push({ action: 'pending', itemId, title, requestId });
+      const due = new Date(now.getTime() + getLoanDays_() * 24 * 60 * 60 * 1000);
+      data[row][4] = 'Borrowed'; data[row][5] = name; data[row][6] = contact || '';
+      data[row][7] = now; data[row][8] = due;
+      data[row][9] = (parseInt(data[row][9], 10) || 0) + 1;
+      touchedRows.push(row);
+      txRows.push([now, itemId, title, 'Borrow', name, contact]);
+      results.push({ action: 'borrow', itemId, title, borrowerName: name, dueDate: due });
     } else {
-      // RETURN — always immediate, never needs approval
+      // RETURN — always immediate
       const prevName = data[row][5];
       const prevContact = data[row][6];
       data[row][4] = 'Available'; data[row][5] = ''; data[row][6] = '';
@@ -1113,21 +985,14 @@ function scanBookBatch(itemsJson, adminEmail) {
     const txSh = getSS().getSheetByName(TX_SHEET);
     txSh.getRange(txSh.getLastRow() + 1, 1, txRows.length, 6).setValues(txRows);
   }
-  if (approvalRows.length) {
-    const apSh = getSS().getSheetByName(APPROVALS_SHEET);
-    const startRow = apSh.getLastRow() + 1;
-    apSh.getRange(startRow, 1, approvalRows.length, approvalRows[0].length).setValues(approvalRows);
-    applyApprovalValidation_(apSh, startRow, approvalRows.length);
-  }
 
   return { results: results };
 }
 
-// Books currently Borrowed or Pending under this name, counted against
-// MaxBorrowItems before a new borrow request is allowed. Deliberately
-// keyed on name rather than contact: siblings signing in as a parent
-// share the same phone/email, so counting by contact would pool the
-// whole family into one limit instead of giving each child their own.
+// Books currently Borrowed under this name, counted against MaxBorrowItems
+// before a new borrow is allowed. Keyed on name rather than contact:
+// siblings signing in as a parent share the same phone/email, so counting
+// by contact would pool the whole family into one limit.
 function countActiveLoans_(name) {
   const target = String(name || '').trim().toLowerCase();
   if (!target) return 0;
@@ -1136,7 +1001,7 @@ function countActiveLoans_(name) {
   for (let i = 1; i < data.length; i++) {
     const status = data[i][4];
     const bName = String(data[i][5] || '').trim().toLowerCase();
-    if ((status === 'Borrowed' || status === 'Pending') && bName === target) count++;
+    if (status === 'Borrowed' && bName === target) count++;
   }
   return count;
 }
@@ -1154,175 +1019,6 @@ function incrementBorrowCount_(sh, rowNum) {
   const cell = sh.getRange(rowNum, BORROW_COUNT_COL);
   const current = parseInt(cell.getValue(), 10);
   cell.setValue((isNaN(current) ? 0 : current) + 1);
-}
-
-function getApprovalsSheet_() {
-  const sh = getSS().getSheetByName(APPROVALS_SHEET);
-  const data = sh.getDataRange().getValues();
-  return { sh, data, header: data[0] };
-}
-
-function findApprovalRow_(data, requestId) {
-  for (let i = 1; i < data.length; i++) {
-    if (String(data[i][0]).trim() === String(requestId).trim()) return i;
-  }
-  return -1;
-}
-
-function appendApprovalRequest_(requestId, itemId, title, name, contact) {
-  const sh = getSS().getSheetByName(APPROVALS_SHEET);
-  sh.appendRow([requestId, new Date(), itemId, title, name, contact || '', 'Pending', '', '', '']);
-  applyApprovalValidation_(sh, sh.getLastRow(), 1);
-}
-
-function findPendingRequestId_(itemId) {
-  const { data } = getApprovalsSheet_();
-  for (let i = data.length - 1; i >= 1; i--) {
-    if (String(data[i][2]).trim() === String(itemId).trim() && data[i][6] === 'Pending') return data[i][0];
-  }
-  return '';
-}
-
-function checkApproval(requestId) {
-  if (!requestId) return { error: 'Missing requestId' };
-  const { data } = getApprovalsSheet_();
-  const row = findApprovalRow_(data, requestId);
-  if (row === -1) return { error: 'Request not found' };
-  const itemId = data[row][2];
-  const title = data[row][3];
-  const requesterName = data[row][4];
-  const decision = data[row][6];
-
-  if (decision === 'Approve') {
-    const { data: books } = getBooksSheet_();
-    const bRow = findRow_(books, itemId);
-    const borrowerName = bRow !== -1 ? books[bRow][5] : requesterName;
-    const dueDate = bRow !== -1 ? books[bRow][8] : null;
-    return { status: 'approved', itemId, title, borrowerName, dueDate };
-  }
-  if (decision === 'Deny') {
-    return { status: 'denied', itemId, title };
-  }
-  return { status: 'pending', itemId, title };
-}
-
-/**
- * Installable onEdit trigger (see installApprovalTrigger). Fires when
- * anyone edits the Approvals sheet's Decision column and enforces that
- * only emails listed in the Admins tab can approve or deny a request.
- */
-function onApprovalEdit(e) {
-  try {
-    const sh = e.range.getSheet();
-    if (sh.getName() !== APPROVALS_SHEET) return;
-    if (e.range.getRow() === 1 || e.range.getColumn() !== APPROVAL_DECISION_COL) return;
-
-    const newValue = String(e.value || '').trim();
-    if (newValue !== 'Approve' && newValue !== 'Deny') return; // ignore reverts back to Pending/blank
-
-    const email = Session.getActiveUser().getEmail();
-    if (!email || !isAdmin_(email)) {
-      e.range.setValue(e.oldValue || 'Pending');
-      SpreadsheetApp.getActive().toast('Only admins listed in the Admins tab can approve or deny borrow requests.', 'Not authorized', 6);
-      return;
-    }
-
-    applyApprovalDecision_(sh, e.range.getRow(), newValue, email);
-  } catch (err) {
-    SpreadsheetApp.getActive().toast('Approval processing error: ' + err.message, 'Error', 6);
-  }
-}
-
-/**
- * Shared by the Sheet's onEdit trigger and the web app's approve
- * actions. `row` is the 1-indexed Approvals sheet row. Does not itself
- * check admin status — callers must verify that first.
- */
-/**
- * overrideDueDate (optional): a date passed in from the web app's
- * approve action. If omitted, falls back to a CustomDueDate the admin
- * may have typed into the Approvals sheet row itself, then to
- * now + getLoanDays_() as the final default.
- */
-function applyApprovalDecision_(sh, row, decision, adminEmail, overrideDueDate) {
-  const rowData = sh.getRange(row, 1, 1, 10).getValues()[0];
-  const itemId = rowData[2];
-  const title = rowData[3];
-  const requesterName = rowData[4];
-  const requesterContact = rowData[5];
-  const sheetCustomDue = rowData[9];
-
-  const { sh: booksSh, data: books } = getBooksSheet_();
-  const bRow = findRow_(books, itemId);
-  const bookIsPending = bRow !== -1 && (books[bRow][4] || '') === 'Pending';
-
-  if (decision === 'Approve' && bookIsPending) {
-    const now = new Date();
-    let due = null;
-    if (overrideDueDate) {
-      const d = new Date(overrideDueDate);
-      if (!isNaN(d.getTime())) due = d;
-    }
-    if (!due && sheetCustomDue) {
-      const d = new Date(sheetCustomDue);
-      if (!isNaN(d.getTime())) due = d;
-    }
-    if (!due) due = new Date(now.getTime() + getLoanDays_() * 24 * 60 * 60 * 1000);
-
-    booksSh.getRange(bRow + 1, 5, 1, 5).setValues([['Borrowed', requesterName, requesterContact || '', now, due]]);
-    logTx_(itemId, title, 'Borrow', requesterName, requesterContact);
-    incrementBorrowCount_(booksSh, bRow + 1);
-  } else if (decision === 'Deny' && bookIsPending) {
-    booksSh.getRange(bRow + 1, 5, 1, 5).setValues([['Available', '', '', '', '']]);
-    logTx_(itemId, title, 'Deny', requesterName, requesterContact);
-  }
-
-  sh.getRange(row, APPROVAL_DECISION_COL, 1, 1).setValue(decision);
-  sh.getRange(row, 8, 1, 2).setValues([[adminEmail, new Date()]]);
-}
-
-function listPendingApprovals(adminEmail) {
-  if (!adminEmail || !isAdmin_(adminEmail)) return { error: 'Not authorized' };
-  const { data } = getApprovalsSheet_();
-  const approvals = [];
-  for (let i = 1; i < data.length; i++) {
-    if (data[i][6] === 'Pending') {
-      approvals.push({
-        requestId: data[i][0],
-        timestamp: data[i][1],
-        itemId: data[i][2],
-        title: data[i][3],
-        requesterName: data[i][4],
-        requesterContact: data[i][5]
-      });
-    }
-  }
-  return { approvals };
-}
-
-function approveRequest(requestId, decision, adminEmail, dueDate) {
-  if (!adminEmail || !isAdmin_(adminEmail)) return { error: 'Not authorized' };
-  if (decision !== 'Approve' && decision !== 'Deny') return { error: 'Invalid decision' };
-  if (!requestId) return { error: 'Missing requestId' };
-  const { sh, data } = getApprovalsSheet_();
-  const row = findApprovalRow_(data, requestId);
-  if (row === -1) return { error: 'Request not found' };
-  if (data[row][6] !== 'Pending') return { error: 'Request already decided' };
-  applyApprovalDecision_(sh, row + 1, decision, adminEmail, dueDate);
-  return { ok: true, requestId, decision };
-}
-
-function approveAllPending(adminEmail) {
-  if (!adminEmail || !isAdmin_(adminEmail)) return { error: 'Not authorized' };
-  const { sh, data } = getApprovalsSheet_();
-  let approved = 0;
-  for (let i = 1; i < data.length; i++) {
-    if (data[i][6] === 'Pending') {
-      applyApprovalDecision_(sh, i + 1, 'Approve', adminEmail);
-      approved++;
-    }
-  }
-  return { ok: true, approved };
 }
 
 function isAdmin_(email) {
