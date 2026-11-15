@@ -225,7 +225,6 @@
     <button id="nav-scan" data-i18n="nav_borrow" onclick="showScreen('scan')">Borrow</button>
     <button id="nav-return" style="display:none;" data-i18n="nav_return" onclick="showScreen('return')">Return</button>
     <button id="nav-shelf" style="display:none;" data-i18n="nav_shelf" onclick="showScreen('shelf')">Shelf</button>
-    <button id="nav-approvals" style="display:none;" data-i18n="nav_approvals" onclick="showScreen('approvals')">Approvals</button>
     <button id="nav-summary" style="display:none;" data-i18n="nav_summary" onclick="showScreen('summary')">Summary</button>
   </nav>
 
@@ -238,25 +237,7 @@
       <p class="section-sub" style="margin:0;" data-i18n="loading">Loading…</p>
     </div>
 
-    <!-- IDENTIFY (login landing page) -->
-    <section class="screen" id="screen-identify">
-      <div id="patronLoginBlock">
-        <h3 class="section-title" data-i18n="identify_title">Sign in</h3>
-        <p class="section-sub" data-i18n="identify_sub">Start typing your name, or your parent's name — pick your record from the list.</p>
-        <div class="field">
-          <label data-i18n="name_label">Name</label>
-          <input type="text" id="loginQuery" placeholder="Start typing…" data-i18n-placeholder="start_typing_placeholder" oninput="onLoginSearchInput()">
-        </div>
-        <p class="section-sub" id="signInStatus" style="color:#e8998a;"></p>
-        <div id="loginCandidates"></div>
-      </div>
-      <p class="section-sub" id="patronLoginDisabledNote" style="display:none;text-align:center;" data-i18n="identify_patron_disabled">Patron sign-in isn't available yet — admins can sign in below.</p>
-      <p class="section-sub" style="text-align:center;margin-top:18px;">
-        <a class="linklike" style="cursor:pointer;" data-i18n="admin_login_link" onclick="showScreen('admin-login')">Admin login</a>
-      </p>
-    </section>
-
-    <!-- ADMIN LOGIN (separate from patron sign-in) -->
+    <!-- ADMIN LOGIN -->
     <section class="screen" id="screen-admin-login">
       <h3 class="section-title" data-i18n="admin_login_title">Admin login</h3>
       <p class="section-sub" data-i18n="admin_login_sub">Separate from patron sign-in. Requires the shared admin passcode.</p>
@@ -406,20 +387,6 @@
              hidden once every match is already on screen. -->
         <button class="btn btn-outline" id="shelfShowMoreBtn" style="display:none;margin-top:6px;" data-i18n="shelf_show_more_btn" onclick="showMoreShelfBooks_()">Show more</button>
       </div>
-    </section>
-
-    <!-- APPROVALS (admin only) -->
-    <section class="screen" id="screen-approvals">
-      <h3 class="section-title" data-i18n="approvals_title">Pending approvals</h3>
-      <p class="section-sub" id="approvalsCount" data-i18n="loading">Loading…</p>
-      <div class="field">
-        <label data-i18n="search_label">Search</label>
-        <input type="text" id="approvalsSearch" placeholder="Search by name or email" data-i18n-placeholder="approvals_search_placeholder" oninput="renderApprovalsList()">
-      </div>
-      <button class="btn btn-primary" data-i18n="approvals_approve_all" onclick="approveAllRequests()">Approve all</button>
-      <button class="btn btn-ghost" style="margin-top:10px;" data-i18n="refresh_btn" onclick="loadApprovals()">Refresh</button>
-      <div class="divider"></div>
-      <div id="approvalsList"></div>
     </section>
 
     <!-- SUMMARY (admin only) -->
@@ -866,7 +833,6 @@ function refreshCurrentScreenDynamicText_(){
     const abtn = document.getElementById('toggleAddBookBtn');
     if(form && abtn) abtn.textContent = (form.style.display !== 'none') ? t('cancel_btn') : t('shelf_add_books_btn');
   }
-  else if(currentScreenName_ === 'approvals'){ loadApprovals(); }
   else if(currentScreenName_ === 'summary' && summaryCache){ renderSummaryTiles(); }
 }
 
@@ -944,7 +910,6 @@ let html5QrCode = null;
 let scanning = false;
 let bookCache = [];
 let scanQueue = []; // { itemId, title, action, name, contact }
-let unassignedBorrows = []; // { itemId, title } — borrows scanned by a parent session, not yet assigned to a child/self
 let pendingScans = []; // itemIds waiting to be looked up (fed from onScanSuccess faster than we can process)
 let processingItemId = null; // itemId currently mid-lookup, so repeat frames of it are ignored
 let scanProcessing = false; // true while the pendingScans drain loop is running
@@ -1040,13 +1005,8 @@ async function onGateScanSuccess(decodedText){
 }
 
 function showScreen(name){
-  if((name==='shelf' || name==='approvals' || name==='return' || name==='summary') && !(USER && USER.isAdmin)) name = 'scan';
-  if(name==='scan' && !USER) name = 'identify';
-  // With patron sign-in turned off (Config tab's PatronLoginEnabled),
-  // there's nothing useful on the landing page for a signed-out visitor
-  // — skip straight to Admin login instead of showing it a moment
-  // before redirecting, or making an admin click through it first.
-  if(name==='identify' && CONFIG.patronLoginEnabled === false) name = 'admin-login';
+  if((name==='shelf' || name==='return' || name==='summary') && !(USER && USER.isAdmin)) name = 'scan';
+  if(name==='scan' && !USER) name = 'admin-login';
   // Leaving the Borrow screen for another tab while an admin had a
   // patron (or family) picked to scan for — clear that pick so coming
   // back later can't accidentally scan for them without re-picking
@@ -1073,7 +1033,6 @@ function showScreen(name){
     setAddBookFormOpen_(false);
     loadShelf();
   }
-  if(name==='approvals') loadApprovals();
   if(name==='summary') loadSummary();
   if(name==='scan'){
     // Clears a stale "Done" confirmation card left over from the last
@@ -1083,7 +1042,7 @@ function showScreen(name){
     // on screen (familyPickerOpen_ — not just "no round member yet",
     // which is also true right after a round has already finished and
     // been confirmed), both need to survive a trip to another tab and back.
-    if(!scanQueue.length && !unassignedBorrows.length && !familyPickerOpen_){
+    if(!scanQueue.length && !familyPickerOpen_){
       const area = document.getElementById('resultArea'); if(area) area.innerHTML = '';
       const note = document.getElementById('scanNote'); if(note) note.textContent = '';
     }
@@ -1105,12 +1064,9 @@ function showScreen(name){
 async function init(){
   updateWhoBadge();
   if(!USER){
-    // showScreen('identify') needs CONFIG.patronLoginEnabled already
-    // loaded to decide whether to redirect to admin-login, so this one
-    // has to finish first.
     await loadRemoteConfig();
     applyAdminUI(false);
-    showScreen('identify');
+    showScreen('admin-login');
     return;
   }
   // Config and the signed-in user's admin/roster re-check don't depend
@@ -1135,26 +1091,6 @@ function debounce_(fn, wait){
 // name since there's no one else to list.
 function contactOf_(u){ return (u && u.parent1) || (u && u.name) || ''; }
 
-// Patron sign-in never grants admin access — see adminLogin() for the
-// separate, deliberately-harder path admins use instead.
-function buildUserFromCandidate_(query, candidate){
-  if(candidate.type === 'individual'){
-    return {
-      mode: 'roster', matchType: 'individual', loginQuery: query,
-      name: candidate.name, contact: contactOf_(candidate), class: candidate.class,
-      isAdmin: false
-    };
-  }
-  // A parent borrowing for themself IS the contact — not derived from
-  // whichever child happens to be listed first.
-  return {
-    mode: 'roster', matchType: 'parent', loginQuery: query,
-    name: candidate.name, contact: candidate.name,
-    children: candidate.children,
-    guardians: (candidate.guardians && candidate.guardians.length) ? candidate.guardians : [candidate.name],
-    isAdmin: false
-  };
-}
 
 function completeSignIn_(user){
   USER = user;
@@ -1171,7 +1107,6 @@ function completeSignIn_(user){
 // identity. Only touches the result/queue area, not the identity itself.
 function resetScanResult_(){
   scanQueue = [];
-  unassignedBorrows = [];
   pendingScans = [];
   processingItemId = null;
   scanProcessing = false;
@@ -1202,49 +1137,7 @@ async function refreshUserMatch(){
     applyAdminUI(!!USER.isAdmin);
     return;
   }
-  if(!USER.loginQuery){ applyAdminUI(false); return; }
-  try{
-    const data = await apiFetch_('searchUsers', { query: USER.loginQuery });
-    const match = (data.candidates || []).find(c => c.type === USER.matchType && c.name === USER.name);
-    if(match){
-      USER = buildUserFromCandidate_(USER.loginQuery, match);
-      localStorage.setItem('stacks_user', JSON.stringify(USER));
-    }
-  }catch(e){ /* offline — keep last-known USER state */ }
   applyAdminUI(false);
-}
-
-const onLoginSearchInput = debounce_(async function(){
-  const query = document.getElementById('loginQuery').value.trim();
-  const statusEl = document.getElementById('signInStatus');
-  const holder = document.getElementById('loginCandidates');
-  statusEl.textContent = '';
-  if(query.length < 2){ holder.innerHTML = ''; return; }
-  try{
-    const data = await apiFetch_('searchUsers', { query });
-    renderLoginCandidates(data.candidates || [], query);
-  }catch(e){
-    statusEl.textContent = t('identify_network_fail');
-  }
-}, 300);
-
-function renderLoginCandidates(candidates, query){
-  const holder = document.getElementById('loginCandidates');
-  if(!candidates.length){
-    holder.innerHTML = '<p style="opacity:0.6;font-size:13px;">'+escapeHtml(t('identify_no_matches'))+'</p>';
-    return;
-  }
-  holder.innerHTML = '';
-  candidates.forEach(c=>{
-    const btn = document.createElement('button');
-    btn.className = 'btn btn-outline';
-    btn.style.marginBottom = '8px';
-    btn.textContent = c.type === 'individual'
-      ? c.name + (c.class ? ' ('+c.class+')' : '')
-      : t('candidate_parent_of', { name: c.name, children: c.children.map(ch=>ch.name).join(', ') });
-    btn.onclick = () => completeSignIn_(buildUserFromCandidate_(query, c));
-    holder.appendChild(btn);
-  });
 }
 
 async function adminLogin(){
@@ -1265,27 +1158,10 @@ async function adminLogin(){
 function applyAdminUI(isAdmin){
   const shelfNav = document.getElementById('nav-shelf');
   if(shelfNav) shelfNav.style.display = isAdmin ? '' : 'none';
-  updateApprovalsNavVisibility_();
   const returnNav = document.getElementById('nav-return');
   if(returnNav) returnNav.style.display = isAdmin ? '' : 'none';
   const summaryNav = document.getElementById('nav-summary');
   if(summaryNav) summaryNav.style.display = isAdmin ? '' : 'none';
-}
-
-// Approvals only ever has anything in it when patron self-service is on
-// — an admin-initiated scan always skips the Pending step entirely (see
-// scanBookBatch in Code.gs), so with PatronLoginEnabled off there's
-// nothing this screen could ever show. Depends on both the signed-in
-// admin's own status and the config toggle, which load independently
-// (see init's Promise.all) — called from wherever either one might have
-// just changed, so it settles on the right answer regardless of which
-// finishes loading first.
-function updateApprovalsNavVisibility_(){
-  const approvalsNav = document.getElementById('nav-approvals');
-  if(!approvalsNav) return;
-  const isAdmin = !!(USER && USER.isAdmin);
-  const patronLoginOn = CONFIG.patronLoginEnabled !== false;
-  approvalsNav.style.display = (isAdmin && patronLoginOn) ? '' : 'none';
 }
 
 async function loadRemoteConfig(){
@@ -1293,38 +1169,13 @@ async function loadRemoteConfig(){
     const data = await apiFetch_('getConfig');
     CONFIG.loanDays = parseInt(data.LoanDays, 10) || 14;
     CONFIG.maxBorrowItems = parseInt(data.MaxBorrowItems, 10) || 4;
-    // Missing/blank defaults to enabled — only an explicit false/0/no
-    // (set via the Config tab's PatronLoginEnabled row) turns it off.
-    // Using ?? rather than || here matters: Google Sheets silently turns
-    // a typed FALSE/TRUE into a real boolean cell, not text, so this
-    // value often arrives as the JS boolean `false` rather than the
-    // string "false" — `false || ''` would collapse that to '', which
-    // fails the regex below and defaults back to enabled, defeating the
-    // whole toggle. ?? only substitutes on null/undefined, not false.
-    CONFIG.patronLoginEnabled = !/^(false|0|no)$/i.test(String(data.PatronLoginEnabled ?? '').trim());
     // Source list for the Add Book form's Group dropdown — hidden if no
     // groups are configured in the Config tab.
     CONFIG.bookGroups = String(data.BookGroups || '').split(',').map(g => g.trim()).filter(Boolean);
   }catch(e){
     console.warn('Could not load config from the sheet', e);
   }
-  applyPatronLoginVisibility_();
   renderAddBookGroupOptions_();
-}
-
-// Lets a school roll this out admin-only at first: with
-// PatronLoginEnabled set to false in the Config tab, the landing page
-// only offers Admin login — the patron search box, and the ability to
-// sign in as a patron at all, are hidden. Purely a UI-level gate, same
-// as the admin-only screen gating elsewhere — searchUsers itself still
-// works if called directly, so this isn't a security boundary.
-function applyPatronLoginVisibility_(){
-  const enabled = CONFIG.patronLoginEnabled !== false;
-  const block = document.getElementById('patronLoginBlock');
-  const note = document.getElementById('patronLoginDisabledNote');
-  if(block) block.style.display = enabled ? '' : 'none';
-  if(note) note.style.display = enabled ? 'none' : 'block';
-  updateApprovalsNavVisibility_();
 }
 
 function updateWhoBadge(){
@@ -1333,7 +1184,7 @@ function updateWhoBadge(){
 }
 
 function handleWhoBadgeClick(){
-  if(USER){ logout(); } else { showScreen('identify'); }
+  if(USER){ logout(); } else { showScreen('admin-login'); }
 }
 
 function logout(){
@@ -1345,7 +1196,7 @@ function logout(){
   updateWhoBadge();
   applyAdminUI(false);
   resetScanResult_();
-  showScreen('identify');
+  showScreen('admin-login');
 }
 
 // Whoever's "family" is active for batched, per-round borrower
@@ -1355,7 +1206,6 @@ function logout(){
 // case there's nothing to batch/assign — see lookupAndQueueScan_.
 function currentFamily_(){
   if(ACTING_AS && ACTING_AS.children) return ACTING_AS;
-  if(!ACTING_AS && USER && USER.matchType === 'parent') return USER;
   return null;
 }
 
@@ -1370,11 +1220,6 @@ function updateScanIdentityBanner(){
     } else if(ACTING_AS){
       el.innerHTML = t('scan_scanning_as', { name: escapeHtml(ACTING_AS.name) })+'<span id="scanIdentityCount"></span> · <a class="linklike" style="cursor:pointer;" onclick="clearActingAs()">'+escapeHtml(t('scan_stop_link'))+'</a>';
       showBorrowCountFor_(ACTING_AS.name, 'scanIdentityCount');
-    } else if(USER && USER.matchType === 'individual'){
-      el.innerHTML = t('scan_signed_in_as', { name: escapeHtml(USER.name) })+'<span id="scanIdentityCount"></span>';
-      showBorrowCountFor_(USER.name, 'scanIdentityCount');
-    } else if(USER && USER.matchType === 'parent'){
-      el.textContent = t('scan_signed_in_parent', { name: USER.name });
     } else {
       el.textContent = '';
     }
@@ -1461,10 +1306,9 @@ async function toggleScanner(){
 async function beginScanningSession_(){
   const readerWrap = document.getElementById('readerWrap');
   const btn = document.getElementById('scanBtn');
-  // Deliberately not clearing scanQueue/unassignedBorrows here — "Scan
-  // more" (see renderScanMoreOrReview_) re-enters through this same
-  // function, and anything already assigned or awaiting assignment from
-  // an earlier round needs to survive into this one.
+  // Deliberately not clearing scanQueue here — "Scan more" re-enters
+  // through this same function, and items from an earlier round need to
+  // survive into this one.
   pendingScans = [];
   processingItemId = null;
   scanProcessing = false;
@@ -1499,18 +1343,13 @@ async function stopScanningSession(skipScanMore = false){
   familyRoundMember_ = null;
   // The last scan or two may still be mid-lookup when the camera stops —
   // without this, we could decide what to show next before those land in
-  // scanQueue/unassignedBorrows, undercounting either one.
+  // scanQueue, undercounting either one.
   await waitForScansToSettle_();
   preScanLoanCount_ = null;
   autoStopAfterScan_ = false;
   autoStopIsLimit_ = false;
   updateScanIdentityBanner();
-  if(unassignedBorrows.length){
-    // Only ever populated by a real parent USER session, which batches
-    // the "who's borrowing" decision to once per round instead of
-    // asking per book.
-    renderGroupAssignPrompt_();
-  } else if(scanQueue.length){
+  if(scanQueue.length){
     if(skipScanMore){
       renderQueueConfirmation();
     } else {
@@ -1627,9 +1466,7 @@ async function showBorrowCountFor_(name, spanId){
   // identity landing after a different one has since been chosen —
   // the span itself gets replaced on every render, so its presence
   // alone doesn't prove this response is still the current identity's.
-  const currentName = (ACTING_AS && !ACTING_AS.children) ? ACTING_AS.name
-    : (USER && USER.matchType === 'individual') ? USER.name
-    : null;
+  const currentName = (ACTING_AS && !ACTING_AS.children) ? ACTING_AS.name : null;
   if(currentName !== name) return;
   preScanLoanCount_ = count;
   const max = CONFIG.maxBorrowItems || 4;
@@ -1705,7 +1542,6 @@ async function lookupAndQueueScan_(itemId){
     if(status === 'Pending'){ flashScanNote_(t('scan_awaiting_approval', { title: data.title })); return; }
 
     const isAdminFamily = ACTING_AS && ACTING_AS.children;
-    const realParentFamily = (!ACTING_AS && USER.matchType === 'parent') ? USER : null;
 
     if(status === 'Available'){
       if(isAdminFamily){
@@ -1721,34 +1557,19 @@ async function lookupAndQueueScan_(itemId){
           addToQueue_(itemId, data.title, 'borrow', familyRoundMember_.name, familyRoundMember_.contact);
           if((familyRoundMember_.activeCount || 0) + scanQueue.filter(q => q.action === 'borrow' && q.name === familyRoundMember_.name).length >= max){ autoStopAfterScan_ = true; autoStopIsLimit_ = true; }
         }
-      } else if(realParentFamily){
-        // Don't interrupt scanning to ask who this is for — that's
-        // batched into a single prompt for the whole round once scanning
-        // stops (see renderGroupAssignPrompt_).
-        unassignedBorrows.push({ itemId, title: data.title });
-        renderScanQueue();
       } else if(ACTING_AS){
         addToQueue_(itemId, data.title, 'borrow', ACTING_AS.name, ACTING_AS.contact);
         if(preScanLoanCount_ !== null){
           const max = CONFIG.maxBorrowItems || 4;
           if(preScanLoanCount_ + scanQueue.filter(q => q.action === 'borrow' && q.name === ACTING_AS.name).length >= max){ autoStopAfterScan_ = true; autoStopIsLimit_ = true; }
         }
-      } else if(USER.matchType === 'admin'){
-        // Only people on the User List can borrow — an admin isn't one,
-        // so borrowing under their own admin identity isn't allowed.
-        // They must look the patron up first (Users tab → "Use for
-        // scan"), which sets ACTING_AS and is handled above.
-        flashScanNote_(t('scan_admin_no_own_name'));
       } else {
-        addToQueue_(itemId, data.title, 'borrow', USER.name, USER.contact);
-        if(preScanLoanCount_ !== null){
-          const max = CONFIG.maxBorrowItems || 4;
-          if(preScanLoanCount_ + scanQueue.filter(q => q.action === 'borrow' && q.name === USER.name).length >= max){ autoStopAfterScan_ = true; autoStopIsLimit_ = true; }
-        }
+        // Only people on the User List can borrow — an admin must pick a
+        // patron first (Users tab → "Use for scan"), which sets ACTING_AS.
+        flashScanNote_(t('scan_admin_no_own_name'));
       }
     } else { // Borrowed
       const placeholder = isAdminFamily ? familyRoundMember_
-        : realParentFamily ? { name: realParentFamily.children[0].name, contact: contactOf_(realParentFamily.children[0]) }
         : ACTING_AS ? ACTING_AS
         : { name: USER.name, contact: USER.contact };
       addToQueue_(itemId, data.title, 'return', placeholder.name, placeholder.contact);
@@ -1759,53 +1580,6 @@ async function lookupAndQueueScan_(itemId){
   }
 }
 
-// Asked once per scanning round (after Stop), for every borrow scanned by
-// a family session this round — not once per book — then assigns all of
-// them to whichever child (or the parent themself) is picked. Works the
-// same whether the family is a real parent USER session or an admin
-// acting as one (see currentFamily_).
-function renderGroupAssignPrompt_(){
-  const area = document.getElementById('resultArea');
-  const family = currentFamily_();
-  const count = unassignedBorrows.length;
-  area.innerHTML = `
-    <div class="stamp-card">
-      <div class="eyebrow">${escapeHtml(t('who_is_this_for'))}</div>
-      <h2>${escapeHtml(t('books_to_borrow', { count }))}</h2>
-      <div id="groupAssignButtons" style="margin-top:14px;display:flex;flex-direction:column;gap:8px;"></div>
-    </div>`;
-  const holder = document.getElementById('groupAssignButtons');
-  family.children.forEach(child=>{
-    const btn = document.createElement('button');
-    btn.className = 'btn btn-outline';
-    btn.textContent = child.name + (child.class ? ' ('+child.class+')' : '');
-    btn.onclick = () => assignUnassignedBorrows_(child.name, contactOf_(child));
-    holder.appendChild(btn);
-  });
-  // Every guardian sharing this family's children gets their own button
-  // (see searchUsers in Code.gs) — not just whichever parent name was
-  // originally searched/signed in with.
-  const guardians = (family.guardians && family.guardians.length) ? family.guardians : [family.name];
-  guardians.forEach(g=>{
-    const selfBtn = document.createElement('button');
-    selfBtn.className = 'btn btn-primary';
-    selfBtn.textContent = t('use_name_parent', { name: g });
-    // Tagged "(Parent)" so this can never collide with a child of the same
-    // name for the per-name borrow limit, and reads clearly in the Sheet.
-    selfBtn.onclick = () => assignUnassignedBorrows_(g + ' (Parent)', g);
-    holder.appendChild(selfBtn);
-  });
-}
-
-function assignUnassignedBorrows_(name, contact){
-  const items = unassignedBorrows.splice(0, unassignedBorrows.length);
-  items.forEach(it => addToQueue_(it.itemId, it.title, 'borrow', name, contact));
-  renderScanMoreOrReview_();
-}
-
-// Offered after each round instead of jumping straight to the final
-// confirmation, so a parent can scan another batch (say, for themself
-// after scanning for a child) before reviewing everything together.
 function renderScanMoreOrReview_(){
   const area = document.getElementById('resultArea');
   const borrowCount = scanQueue.filter(q=>q.action==='borrow').length;
@@ -1826,7 +1600,7 @@ function renderScanMoreOrReview_(){
   document.getElementById('confirmList').innerHTML = scanQueue.map(q => `<div class="detail-row"><span>${escapeHtml(t(q.action==='borrow'?'borrow_label':'return_label'))}</span><span>${escapeHtml(q.title)}</span></div>`).join('');
   document.getElementById('confirmQueueBtn').onclick = commitScanQueue;
   document.getElementById('scanMoreBtn').onclick = () => { area.innerHTML = ''; toggleScanner(); };
-  document.getElementById('cancelQueueBtn').onclick = () => { scanQueue = []; unassignedBorrows = []; renderScanQueue(); area.innerHTML = ''; };
+  document.getElementById('cancelQueueBtn').onclick = () => { scanQueue = []; renderScanQueue(); area.innerHTML = ''; };
 }
 
 function addToQueue_(itemId, title, action, name, contact){
@@ -1857,9 +1631,9 @@ function flashScanToast_(msg){
 function renderScanQueue(){
   const el = document.getElementById('scanQueueList');
   if(!el) return;
-  const total = scanQueue.length + unassignedBorrows.length;
-  if(!total){ el.innerHTML=''; return; }
-  const assignedRows = scanQueue.map((q,i) => `
+  if(!scanQueue.length){ el.innerHTML=''; return; }
+  el.innerHTML = '<p class="section-sub" style="margin:10px 0 6px;">'+escapeHtml(t('items_scanned', { n: scanQueue.length }))+'</p>' +
+    scanQueue.map((q,i) => `
     <div class="book-row">
       <div class="meta">
         <div class="title">${escapeHtml(q.title)}</div>
@@ -1867,22 +1641,8 @@ function renderScanQueue(){
       </div>
       <button class="btn btn-ghost btn-sm" data-idx="${i}">${escapeHtml(t('remove_btn'))}</button>
     </div>`).join('');
-  // Borrows a parent has scanned this round but hasn't assigned to a
-  // child/self yet — see renderGroupAssignPrompt_.
-  const unassignedRows = unassignedBorrows.map((u,i) => `
-    <div class="book-row">
-      <div class="meta">
-        <div class="title">${escapeHtml(u.title)}</div>
-        <div class="sub">${escapeHtml(t('who_borrowing_pending'))}</div>
-      </div>
-      <button class="btn btn-ghost btn-sm" data-uidx="${i}">${escapeHtml(t('remove_btn'))}</button>
-    </div>`).join('');
-  el.innerHTML = '<p class="section-sub" style="margin:10px 0 6px;">'+escapeHtml(t('items_scanned', { n: total }))+'</p>' + assignedRows + unassignedRows;
   el.querySelectorAll('button[data-idx]').forEach(btn=>{
     btn.onclick = () => { scanQueue.splice(Number(btn.dataset.idx), 1); renderScanQueue(); };
-  });
-  el.querySelectorAll('button[data-uidx]').forEach(btn=>{
-    btn.onclick = () => { unassignedBorrows.splice(Number(btn.dataset.uidx), 1); renderScanQueue(); };
   });
 }
 
@@ -1905,7 +1665,7 @@ function renderQueueConfirmation(){
   const listEl = document.getElementById('confirmList');
   listEl.innerHTML = scanQueue.map(q => `<div class="detail-row"><span>${escapeHtml(t(q.action==='borrow'?'borrow_label':'return_label'))}</span><span>${escapeHtml(q.title)}</span></div>`).join('');
   document.getElementById('confirmQueueBtn').onclick = commitScanQueue;
-  document.getElementById('cancelQueueBtn').onclick = () => { scanQueue = []; unassignedBorrows = []; renderScanQueue(); document.getElementById('resultArea').innerHTML=''; };
+  document.getElementById('cancelQueueBtn').onclick = () => { scanQueue = []; renderScanQueue(); document.getElementById('resultArea').innerHTML=''; };
 }
 
 // Sent as one batched request (see scanBookBatch in Code.gs) rather than
@@ -1967,12 +1727,7 @@ function myBooksNames_(){
     const guardians = (family.guardians && family.guardians.length) ? family.guardians : [family.name];
     return guardians.map(g=>g+' (Parent)').concat(family.children.map(c=>c.name));
   }
-  // An admin isn't on the User List themselves — once they've picked a
-  // patron to scan for (ACTING_AS), show that person's own current
-  // borrows/pending instead of nothing.
-  if(USER.matchType === 'admin') return ACTING_AS ? [ACTING_AS.name] : [];
-  if(USER.matchType === 'individual') return [USER.name];
-  return [];
+  return ACTING_AS ? [ACTING_AS.name] : [];
 }
 
 async function refreshMyBooks(){
@@ -2303,72 +2058,6 @@ function renderAddBookGroupOptions_(){
   if(groups.includes(current)) select.value = current;
 }
 
-let approvalsCache = [];
-
-async function loadApprovals(){
-  const countEl = document.getElementById('approvalsCount');
-  countEl.textContent = t('loading');
-  try{
-    const data = await apiFetch_('listApprovals', { adminEmail: USER.contact || '' });
-    if(data.error){
-      countEl.textContent = data.error;
-      approvalsCache = [];
-      renderApprovalsList();
-      return;
-    }
-    approvalsCache = data.approvals || [];
-    countEl.textContent = t('approvals_count', { n: approvalsCache.length });
-    renderApprovalsList();
-  }catch(e){
-    countEl.textContent = t('approvals_could_not_load');
-  }
-}
-
-function renderApprovalsList(){
-  const listEl = document.getElementById('approvalsList');
-  const q = (document.getElementById('approvalsSearch').value || '').trim().toLowerCase();
-  const filtered = !q ? approvalsCache : approvalsCache.filter(a =>
-    String(a.requesterName||'').toLowerCase().includes(q) || String(a.requesterContact||'').toLowerCase().includes(q)
-  );
-  listEl.innerHTML = filtered.map(a => `
-    <div class="book-row" style="flex-wrap:wrap;gap:8px;">
-      <div class="meta">
-        <div class="title">${escapeHtml(a.title)}</div>
-        <div class="sub">${escapeHtml(a.itemId)} · ${escapeHtml(a.requesterName)} · ${escapeHtml(a.requesterContact||'')}</div>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <input type="date" id="due-${a.requestId}" value="${defaultDueDateStr_()}">
-        <button class="btn btn-primary btn-sm" onclick="approveOne('${a.requestId}')">${escapeHtml(t('approvals_approve_btn'))}</button>
-      </div>
-    </div>`).join('') || '<p style="opacity:0.6;font-size:13px;">'+escapeHtml(q ? t('approvals_no_pending_search') : t('approvals_no_pending'))+'</p>';
-}
-
-function defaultDueDateStr_(){
-  const days = CONFIG.loanDays || 14;
-  const d = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
-  return d.toISOString().slice(0, 10);
-}
-
-async function approveOne(requestId){
-  try{
-    const dueInput = document.getElementById('due-'+requestId);
-    const dueDate = dueInput ? dueInput.value : '';
-    const data = await apiFetch_('approveRequest', { requestId, decision: 'Approve', adminEmail: USER.contact || '', dueDate: dueDate || undefined });
-    if(data.error){ alert(data.error); return; }
-    loadApprovals();
-  }catch(e){ alert(t('approvals_could_not_approve')); }
-}
-
-async function approveAllRequests(){
-  if(!approvalsCache.length){ return; }
-  if(!confirm(t('approvals_confirm_all', { n: approvalsCache.length }))) return;
-  try{
-    const data = await apiFetch_('approveAll', { adminEmail: USER.contact || '' });
-    if(data.error){ alert(data.error); return; }
-    loadApprovals();
-  }catch(e){ alert(t('approvals_could_not_approve_all')); }
-}
-
 let summaryCache = null;
 
 async function loadSummary(){
@@ -2429,9 +2118,8 @@ async function actAsUser(user){
 
 // Acting as a whole family (a parent group) instead of one flat
 // identity — batches scans across the round and asks who each one is
-// for afterward, same as a real parent USER session (see
-// currentFamily_/renderGroupAssignPrompt_). Lets an admin scan a mixed
-// batch for several kids (or the parent) without re-picking mid-round.
+// for afterward. Lets an admin scan a mixed batch for several kids
+// (or the parent) without re-picking mid-round.
 async function actAsFamily_(candidate){
   // guardians covers every parent sharing this family's children (see
   // searchUsers in Code.gs) — falls back to just the searched/clicked
