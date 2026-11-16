@@ -9,8 +9,8 @@
  *    (if you opened it via Extensions > Apps Script from inside the
  *    sheet, you can leave SHEET_ID as '' — it will use the active sheet).
  * 5. Run `setupSheets` from the editor (select it in the function
- *    dropdown, click Run). This creates the Books, Transactions, Admins,
- *    and User List tabs with the right headers. Approve the
+ *    dropdown, click Run). This creates the Books, Transactions, History,
+ *    Admins, and User List tabs with the right headers. Approve the
  *    permissions prompt. Safe to run again any time (e.g. after pasting
  *    in an updated version of this file) — it only creates whatever's
  *    missing and never clears a tab that already has data in it.
@@ -166,6 +166,7 @@
 const SHEET_ID = ''; // leave blank if script is bound to the sheet
 const BOOKS_SHEET = 'Books';
 const TX_SHEET = 'Transactions';
+const HISTORY_SHEET = 'History';
 const ADMINS_SHEET = 'Admins';
 const CONFIG_SHEET = 'Config';
 const USERS_SHEET = 'User List';
@@ -231,10 +232,20 @@ function setupSheets() {
     tx.setFrozenRows(1);
   }
 
+  // History: one row per borrow lifecycle — ReturnDate filled in when
+  // the book comes back, blank if still out. Use Sheet filters on
+  // ReturnDate (blank = outstanding) or BorrowerName for term-end reports.
+  let history = ss.getSheetByName(HISTORY_SHEET);
+  if (!history) {
+    history = ss.insertSheet(HISTORY_SHEET);
+    history.appendRow(['BorrowDate', 'ItemID', 'Title', 'BorrowerName', 'BorrowerContact', 'DueDate', 'ReturnDate']);
+    history.setFrozenRows(1);
+  }
+
   // Every tab here is safe to re-run: existing sheets are never
   // cleared, only created (and headers self-healed) if missing — so
   // running setupSheets again never wipes your books, transaction
-  // history, admin list, or roster.
+  // history, borrow history, admin list, or roster.
   let admins = ss.getSheetByName(ADMINS_SHEET);
   if (!admins) {
     admins = ss.insertSheet(ADMINS_SHEET);
@@ -793,6 +804,9 @@ function doGet(e) {
         case 'getSummary':
           result = getSummary(e.parameter.adminEmail);
           break;
+        case 'getHistory':
+          result = getHistory(e.parameter.adminEmail, e.parameter.filter, e.parameter.name);
+          break;
         case 'getConfig':
           result = getPublicConfig();
           break;
@@ -880,13 +894,15 @@ function scanBook(itemId, name, contact, adminEmail) {
     sh.getRange(rowNum, 5, 1, 5).setValues([['Borrowed', name, contact || '', now, due]]);
     logTx_(itemId, title, 'Borrow', name, contact);
     incrementBorrowCount_(sh, rowNum);
+    appendHistoryBorrows_([[now, itemId, title, name, contact || '', due]]);
     return { action: 'borrow', itemId, title, borrowerName: name, dueDate: due };
   } else {
-    // RETURN — always immediate, never needs approval
+    // RETURN — always immediate
     const prevName = data[row][5];
     const prevContact = data[row][6];
     sh.getRange(rowNum, 5, 1, 5).setValues([['Available', '', '', '', '']]);
     logTx_(itemId, title, 'Return', prevName, prevContact);
+    updateHistoryReturns_([itemId], now);
     return { action: 'return', itemId, title, borrowerName: prevName };
   }
 }
@@ -927,6 +943,8 @@ function scanBookBatch(itemsJson, adminEmail) {
 
   const touchedRows = []; // indices into `data` whose columns E:J changed
   const txRows = [];
+  const historyBorrowRows = [];
+  const returnItemIds = [];
   const results = [];
 
   items.forEach(item => {
@@ -953,6 +971,7 @@ function scanBookBatch(itemsJson, adminEmail) {
       data[row][9] = (parseInt(data[row][9], 10) || 0) + 1;
       touchedRows.push(row);
       txRows.push([now, itemId, title, 'Borrow', name, contact]);
+      historyBorrowRows.push([now, itemId, title, name, contact || '', due]);
       results.push({ action: 'borrow', itemId, title, borrowerName: name, dueDate: due });
     } else {
       // RETURN — always immediate
@@ -962,6 +981,7 @@ function scanBookBatch(itemsJson, adminEmail) {
       data[row][7] = ''; data[row][8] = '';
       touchedRows.push(row);
       txRows.push([now, itemId, title, 'Return', prevName, prevContact]);
+      returnItemIds.push(itemId);
       results.push({ action: 'return', itemId, title, borrowerName: prevName });
     }
   });
@@ -985,6 +1005,8 @@ function scanBookBatch(itemsJson, adminEmail) {
     const txSh = getSS().getSheetByName(TX_SHEET);
     txSh.getRange(txSh.getLastRow() + 1, 1, txRows.length, 6).setValues(txRows);
   }
+  appendHistoryBorrows_(historyBorrowRows);
+  updateHistoryReturns_(returnItemIds, now);
 
   return { results: results };
 }
@@ -1019,6 +1041,36 @@ function incrementBorrowCount_(sh, rowNum) {
   const cell = sh.getRange(rowNum, BORROW_COUNT_COL);
   const current = parseInt(cell.getValue(), 10);
   cell.setValue((isNaN(current) ? 0 : current) + 1);
+}
+
+// Appends one row to the History tab per borrow. rows = arrays of
+// [borrowDate, itemId, title, borrowerName, borrowerContact, dueDate].
+// Safe to call when History doesn't exist yet — skips silently so a
+// deploy without running setupSheets first doesn't break scanning.
+function appendHistoryBorrows_(rows) {
+  if (!rows.length) return;
+  const sh = getSS().getSheetByName(HISTORY_SHEET);
+  if (!sh) return;
+  sh.getRange(sh.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
+}
+
+// Fills in the ReturnDate column for each itemId's most recent open
+// (ReturnDate-blank) History row. Reads History once and updates each
+// matching row in-place so the same scan batch can't double-match.
+function updateHistoryReturns_(itemIds, returnDate) {
+  if (!itemIds.length) return;
+  const sh = getSS().getSheetByName(HISTORY_SHEET);
+  if (!sh) return;
+  const data = sh.getDataRange().getValues();
+  itemIds.forEach(itemId => {
+    for (let i = data.length - 1; i >= 1; i--) {
+      if (String(data[i][1]).trim() === String(itemId).trim() && !data[i][6]) {
+        sh.getRange(i + 1, 7).setValue(returnDate);
+        data[i][6] = returnDate; // prevent double-match if same itemId appears twice
+        break;
+      }
+    }
+  });
 }
 
 function isAdmin_(email) {
@@ -1228,6 +1280,41 @@ function myLoans(namesCsv) {
  * full item details so the web app can show them on click without a
  * second request.
  */
+// Returns borrow history from the History tab.
+// filter='outstanding' → only rows with no ReturnDate (still out).
+// name (optional) → substring-match on BorrowerName (case-insensitive).
+// Results are newest-first. The History tab itself is the best place for
+// custom term-end reports: filter ReturnDate=blank for outstanding books,
+// or filter BorrowerName for a specific person's history.
+function getHistory(adminEmail, filter, name) {
+  if (!adminEmail || !isAdmin_(adminEmail)) return { error: 'Not authorized' };
+  const sh = getSS().getSheetByName(HISTORY_SHEET);
+  if (!sh) return { history: [] };
+  const data = sh.getDataRange().getValues();
+  if (data.length <= 1) return { history: [] };
+
+  let rows = data.slice(1);
+  if (filter === 'outstanding') {
+    rows = rows.filter(r => !r[6]);
+  } else if (name) {
+    const target = String(name).trim().toLowerCase();
+    rows = rows.filter(r => String(r[3]).trim().toLowerCase().includes(target));
+  }
+
+  rows = rows.slice().reverse(); // most recent first
+
+  return {
+    history: rows.map(r => ({
+      borrowDate: r[0],
+      itemId: String(r[1] || ''),
+      title: String(r[2] || ''),
+      borrowerName: String(r[3] || ''),
+      dueDate: r[5] || null,
+      returnDate: r[6] || null
+    }))
+  };
+}
+
 function getSummary(adminEmail) {
   if (!adminEmail || !isAdmin_(adminEmail)) return { error: 'Not authorized' };
   const { data } = getBooksSheet_();

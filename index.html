@@ -226,6 +226,7 @@
     <button id="nav-return" style="display:none;" data-i18n="nav_return" onclick="showScreen('return')">Return</button>
     <button id="nav-shelf" style="display:none;" data-i18n="nav_shelf" onclick="showScreen('shelf')">Shelf</button>
     <button id="nav-summary" style="display:none;" data-i18n="nav_summary" onclick="showScreen('summary')">Summary</button>
+    <button id="nav-report" style="display:none;" data-i18n="nav_report" onclick="showScreen('report')">Report</button>
   </nav>
 
   <main>
@@ -398,6 +399,26 @@
       <div id="summaryDetail"></div>
     </section>
 
+    <!-- REPORT (admin only) -->
+    <section class="screen" id="screen-report">
+      <h3 class="section-title" data-i18n="report_title">Borrow History</h3>
+      <div style="display:flex;gap:8px;margin-bottom:16px;">
+        <button class="btn btn-primary btn-sm" id="reportTabOutstanding" data-i18n="report_tab_outstanding" onclick="switchReportTab_('outstanding')">Outstanding</button>
+        <button class="btn btn-outline btn-sm" id="reportTabSearch" data-i18n="report_tab_search" onclick="switchReportTab_('search')">By name</button>
+      </div>
+      <div id="reportOutstandingArea"></div>
+      <div id="reportSearchArea" style="display:none;">
+        <div class="field">
+          <label data-i18n="report_search_label">Borrower name</label>
+          <div style="display:flex;gap:8px;">
+            <input type="text" id="reportNameInput" placeholder="Name…" data-i18n-placeholder="report_search_placeholder" style="flex:1;margin-bottom:0;" onkeydown="if(event.key==='Enter')searchReportByName_()">
+            <button class="btn btn-primary btn-sm" data-i18n="search_label" onclick="searchReportByName_()">Search</button>
+          </div>
+        </div>
+        <div id="reportSearchResults"></div>
+      </div>
+    </section>
+
   </main>
 </div>
 
@@ -440,6 +461,23 @@ const I18N = {
     nav_shelf: 'Shelf',
     nav_approvals: 'Approvals',
     nav_summary: 'Summary',
+    nav_report: 'Report',
+
+    report_title: 'Borrow History',
+    report_tab_outstanding: 'Outstanding',
+    report_tab_search: 'By name',
+    report_search_label: 'Search by borrower name',
+    report_search_placeholder: 'Name…',
+    report_outstanding_empty: 'No books currently out — all returned.',
+    report_search_empty: 'No borrow history found for that name.',
+    report_search_hint: 'Enter a name above to see their borrow history.',
+    report_could_not_load: 'Could not load history.',
+    report_outstanding_badge: 'Outstanding',
+    report_overdue_badge: 'Overdue',
+    report_returned_badge: 'Returned',
+    report_borrow_date: 'Borrowed',
+    report_due_date: 'Due',
+    report_return_date: 'Returned',
 
     who_login: 'Log in',
     who_logout: 'Log out',
@@ -619,6 +657,23 @@ const I18N = {
     nav_shelf: '本棚',
     nav_approvals: '承認',
     nav_summary: 'サマリー',
+    nav_report: '記録',
+
+    report_title: '貸出履歴',
+    report_tab_outstanding: '未返却',
+    report_tab_search: '氏名で検索',
+    report_search_label: '借り主の名前で検索',
+    report_search_placeholder: '名前…',
+    report_outstanding_empty: '現在貸出中の本はありません。',
+    report_search_empty: 'この名前の貸出履歴が見つかりません。',
+    report_search_hint: '上に名前を入力すると貸出履歴が表示されます。',
+    report_could_not_load: '履歴を読み込めませんでした。',
+    report_outstanding_badge: '未返却',
+    report_overdue_badge: '延滞',
+    report_returned_badge: '返却済',
+    report_borrow_date: '貸出日',
+    report_due_date: '返却期限',
+    report_return_date: '返却日',
 
     who_login: 'ログイン',
     who_logout: 'ログアウト',
@@ -1005,7 +1060,7 @@ async function onGateScanSuccess(decodedText){
 }
 
 function showScreen(name){
-  if((name==='shelf' || name==='return' || name==='summary') && !(USER && USER.isAdmin)) name = 'scan';
+  if((name==='shelf' || name==='return' || name==='summary' || name==='report') && !(USER && USER.isAdmin)) name = 'scan';
   if(name==='scan' && !USER) name = 'admin-login';
   // Leaving the Borrow screen for another tab while an admin had a
   // patron (or family) picked to scan for — clear that pick so coming
@@ -1034,6 +1089,7 @@ function showScreen(name){
     loadShelf();
   }
   if(name==='summary') loadSummary();
+  if(name==='report') loadReport_();
   if(name==='scan'){
     // Clears a stale "Done" confirmation card left over from the last
     // completed batch when switching back to this tab from elsewhere —
@@ -1162,6 +1218,8 @@ function applyAdminUI(isAdmin){
   if(returnNav) returnNav.style.display = isAdmin ? '' : 'none';
   const summaryNav = document.getElementById('nav-summary');
   if(summaryNav) summaryNav.style.display = isAdmin ? '' : 'none';
+  const reportNav = document.getElementById('nav-report');
+  if(reportNav) reportNav.style.display = isAdmin ? '' : 'none';
 }
 
 async function loadRemoteConfig(){
@@ -2110,6 +2168,106 @@ function renderSummaryDetail(key, label){
         </div>
         <span class="status-pill borrowed">${it.dueDate ? new Date(it.dueDate).toLocaleDateString() : '—'}</span>
       </div>`).join('');
+}
+
+// ---- Report screen (admin only) ------------------------------------
+
+function loadReport_(){
+  // Always (re-)load outstanding on each visit; search area starts blank.
+  switchReportTab_('outstanding');
+}
+
+function switchReportTab_(tab){
+  const outstanding = document.getElementById('reportTabOutstanding');
+  const search = document.getElementById('reportTabSearch');
+  const outArea = document.getElementById('reportOutstandingArea');
+  const searchArea = document.getElementById('reportSearchArea');
+  if(tab === 'outstanding'){
+    outstanding.className = 'btn btn-primary btn-sm';
+    search.className = 'btn btn-outline btn-sm';
+    outArea.style.display = '';
+    searchArea.style.display = 'none';
+    fetchOutstanding_();
+  } else {
+    outstanding.className = 'btn btn-outline btn-sm';
+    search.className = 'btn btn-primary btn-sm';
+    outArea.style.display = 'none';
+    searchArea.style.display = '';
+    const input = document.getElementById('reportNameInput');
+    if(input){ input.value = ''; input.focus(); }
+    document.getElementById('reportSearchResults').innerHTML =
+      '<p class="section-sub">'+escapeHtml(t('report_search_hint'))+'</p>';
+  }
+}
+
+async function fetchOutstanding_(){
+  const area = document.getElementById('reportOutstandingArea');
+  area.innerHTML = '<p class="section-sub">'+escapeHtml(t('loading'))+'</p>';
+  try{
+    const data = await apiFetch_('getHistory', { adminEmail: USER.contact || '', filter: 'outstanding' });
+    if(data.error){ area.innerHTML = '<p class="section-sub">'+escapeHtml(data.error)+'</p>'; return; }
+    if(!data.history.length){ area.innerHTML = '<p class="section-sub">'+escapeHtml(t('report_outstanding_empty'))+'</p>'; return; }
+    // Sort overdue first (smallest dueDate first), then by dueDate ascending.
+    const now = new Date();
+    const sorted = data.history.slice().sort((a, b) => {
+      const da = a.dueDate ? new Date(a.dueDate) : new Date('9999-12-31');
+      const db = b.dueDate ? new Date(b.dueDate) : new Date('9999-12-31');
+      return da - db;
+    });
+    area.innerHTML = renderHistoryRows_(sorted, true, now);
+  }catch(e){
+    area.innerHTML = '<p class="section-sub">'+escapeHtml(t('report_could_not_load'))+'</p>';
+  }
+}
+
+async function searchReportByName_(){
+  const name = (document.getElementById('reportNameInput').value || '').trim();
+  const area = document.getElementById('reportSearchResults');
+  if(!name){ area.innerHTML = '<p class="section-sub">'+escapeHtml(t('report_search_hint'))+'</p>'; return; }
+  area.innerHTML = '<p class="section-sub">'+escapeHtml(t('loading'))+'</p>';
+  try{
+    const data = await apiFetch_('getHistory', { adminEmail: USER.contact || '', name });
+    if(data.error){ area.innerHTML = '<p class="section-sub">'+escapeHtml(data.error)+'</p>'; return; }
+    if(!data.history.length){ area.innerHTML = '<p class="section-sub">'+escapeHtml(t('report_search_empty'))+'</p>'; return; }
+    area.innerHTML = renderHistoryRows_(data.history, false, new Date());
+  }catch(e){
+    area.innerHTML = '<p class="section-sub">'+escapeHtml(t('report_could_not_load'))+'</p>';
+  }
+}
+
+// Builds the HTML for a list of history rows.
+// showBorrower: show borrower name (outstanding tab) vs hide (by-name search shows all for one person).
+function renderHistoryRows_(rows, showBorrower, now){
+  return rows.map(r => {
+    const dueDate = r.dueDate ? new Date(r.dueDate) : null;
+    const borrowDate = r.borrowDate ? new Date(r.borrowDate) : null;
+    const isOverdue = !r.returnDate && dueDate && dueDate < now;
+    let pillClass, pillLabel;
+    if(r.returnDate){
+      pillClass = 'avail';
+      pillLabel = t('report_returned_badge');
+    } else if(isOverdue){
+      pillClass = 'borrowed';
+      pillLabel = t('report_overdue_badge');
+    } else {
+      pillClass = 'pending';
+      pillLabel = t('report_outstanding_badge');
+    }
+    const sub1 = showBorrower ? escapeHtml(r.borrowerName||'') + ' · ' : '';
+    const borrowStr = borrowDate ? borrowDate.toLocaleDateString() : '—';
+    const dueStr = dueDate ? dueDate.toLocaleDateString() : '—';
+    const returnStr = r.returnDate ? new Date(r.returnDate).toLocaleDateString() : null;
+    const sub2 = sub1 + escapeHtml(t('report_borrow_date')) + ': ' + escapeHtml(borrowStr) + ' · ' + escapeHtml(t('report_due_date')) + ': ' + escapeHtml(dueStr);
+    const sub3 = returnStr ? escapeHtml(t('report_return_date')) + ': ' + escapeHtml(returnStr) : '';
+    return `<div class="book-row">
+      <div class="meta">
+        <div class="title">${escapeHtml(r.title||'')}</div>
+        <div class="sub">${sub2}</div>
+        ${sub3 ? '<div class="sub">'+sub3+'</div>' : ''}
+      </div>
+      <span class="status-pill ${pillClass}">${escapeHtml(pillLabel)}</span>
+    </div>`;
+  }).join('');
 }
 
 async function actAsUser(user){
