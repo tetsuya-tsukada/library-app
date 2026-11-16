@@ -408,7 +408,9 @@
       </div>
       <div class="field">
         <label data-i18n="report_filter_borrower">Borrower</label>
-        <input type="text" id="reportBorrowerFilter" placeholder="…" oninput="applyReportFilters_()">
+        <input type="text" id="reportBorrowerFilter" placeholder="…" autocomplete="off"
+          oninput="applyReportFilters_(); onReportBorrowerSearch_()">
+        <div id="reportBorrowerResults"></div>
       </div>
       <div class="field">
         <label data-i18n="report_filter_status">Status</label>
@@ -2181,6 +2183,7 @@ async function loadReport_(){
   document.getElementById('reportSummaryLine').innerHTML = '';
   document.getElementById('reportTitleFilter').value = '';
   document.getElementById('reportBorrowerFilter').value = '';
+  document.getElementById('reportBorrowerResults').innerHTML = '';
   document.getElementById('reportStatusFilter').value = '';
   try{
     const data = await apiFetch_('getHistory', { adminEmail: USER.contact || '' });
@@ -2214,6 +2217,35 @@ function applyReportFilters_(){
   if(!rows.length){ area.innerHTML = '<p class="section-sub">'+escapeHtml(t('report_no_results'))+'</p>'; return; }
   area.innerHTML = renderHistoryRows_(rows, true, new Date());
 }
+
+const onReportBorrowerSearch_ = debounce_(async function(){
+  const query = (document.getElementById('reportBorrowerFilter').value || '').trim();
+  const listEl = document.getElementById('reportBorrowerResults');
+  if(query.length < 2){ listEl.innerHTML = ''; return; }
+  try{
+    const data = await apiFetch_('searchUsers', { query });
+    const candidates = data.candidates || [];
+    if(!candidates.length){ listEl.innerHTML = ''; return; }
+    listEl.innerHTML = candidates.map((c, i) =>
+      `<div class="book-row" style="cursor:pointer;" data-idx="${i}">
+        <div class="meta">
+          <div class="title">${escapeHtml(c.name)}</div>
+          ${c.class ? '<div class="sub">'+escapeHtml(c.class)+'</div>' : ''}
+        </div>
+      </div>`
+    ).join('');
+    listEl.querySelectorAll('.book-row[data-idx]').forEach(row => {
+      const c = candidates[Number(row.dataset.idx)];
+      row.onclick = () => {
+        document.getElementById('reportBorrowerFilter').value = c.name;
+        listEl.innerHTML = '';
+        applyReportFilters_();
+      };
+    });
+  }catch(e){
+    listEl.innerHTML = '';
+  }
+}, 300);
 
 
 // Builds the HTML for a list of history rows.
