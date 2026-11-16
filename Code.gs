@@ -1374,13 +1374,14 @@ function getHistory(adminEmail, filter, name) {
 
   rows = rows.slice().reverse(); // most recent first
 
+  const loanMs = getLoanDays_() * 24 * 60 * 60 * 1000;
   return {
     history: rows.map(r => ({
       borrowDate: r[0],
       itemId: String(r[2] || ''),
       title: String(r[3] || ''),
       borrowerName: String(r[4] || ''),
-      dueDate: null,
+      dueDate: r[0] ? new Date(new Date(r[0]).getTime() + loanMs) : null,
       returnDate: r[1] || null
     }))
   };
