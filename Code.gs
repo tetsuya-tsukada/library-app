@@ -1329,17 +1329,18 @@ function myLoans(namesCsv) {
 // or filter BorrowerName for a specific person's history.
 function getHistory(adminEmail, filter, name) {
   if (!adminEmail || !isAdmin_(adminEmail)) return { error: 'Not authorized' };
-  const sh = getSS().getSheetByName(HISTORY_SHEET);
+  const sh = getSS().getSheetByName(TX_SHEET);
   if (!sh) return { history: [] };
   const data = sh.getDataRange().getValues();
   if (data.length <= 1) return { history: [] };
 
+  // Transactions schema: BorrowTimestamp(0), ReturnTimestamp(1), ItemID(2), Title(3), BorrowerName(4)
   let rows = data.slice(1);
   if (filter === 'outstanding') {
-    rows = rows.filter(r => !r[6]);
+    rows = rows.filter(r => !r[1]);
   } else if (name) {
     const target = String(name).trim().toLowerCase();
-    rows = rows.filter(r => String(r[3]).trim().toLowerCase().includes(target));
+    rows = rows.filter(r => String(r[4]).trim().toLowerCase().includes(target));
   }
 
   rows = rows.slice().reverse(); // most recent first
@@ -1347,11 +1348,11 @@ function getHistory(adminEmail, filter, name) {
   return {
     history: rows.map(r => ({
       borrowDate: r[0],
-      itemId: String(r[1] || ''),
-      title: String(r[2] || ''),
-      borrowerName: String(r[3] || ''),
-      dueDate: r[5] || null,
-      returnDate: r[6] || null
+      itemId: String(r[2] || ''),
+      title: String(r[3] || ''),
+      borrowerName: String(r[4] || ''),
+      dueDate: null,
+      returnDate: r[1] || null
     }))
   };
 }

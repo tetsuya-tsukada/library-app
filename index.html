@@ -408,14 +408,8 @@
       </div>
       <div id="reportOutstandingArea"></div>
       <div id="reportSearchArea" style="display:none;">
-        <div class="field">
-          <label data-i18n="report_search_label">Borrower name</label>
-          <div style="display:flex;gap:8px;">
-            <input type="text" id="reportNameInput" placeholder="Name…" data-i18n-placeholder="report_search_placeholder" style="flex:1;margin-bottom:0;" onkeydown="if(event.key==='Enter')searchReportByName_()">
-            <button class="btn btn-primary btn-sm" data-i18n="search_label" onclick="searchReportByName_()">Search</button>
-          </div>
-        </div>
-        <div id="reportSearchResults"></div>
+        <div id="reportNameList"></div>
+        <div id="reportSearchResults" style="display:none;"></div>
       </div>
     </section>
 
@@ -466,11 +460,10 @@ const I18N = {
     report_title: 'Borrow History',
     report_tab_outstanding: 'Outstanding',
     report_tab_search: 'By name',
-    report_search_label: 'Search by borrower name',
-    report_search_placeholder: 'Name…',
     report_outstanding_empty: 'No books currently out — all returned.',
     report_search_empty: 'No borrow history found for that name.',
-    report_search_hint: 'Enter a name above to see their borrow history.',
+    report_name_list_empty: 'No borrow history yet.',
+    report_back: 'All borrowers',
     report_could_not_load: 'Could not load history.',
     report_outstanding_badge: 'Outstanding',
     report_overdue_badge: 'Overdue',
@@ -662,11 +655,10 @@ const I18N = {
     report_title: '貸出履歴',
     report_tab_outstanding: '未返却',
     report_tab_search: '氏名で検索',
-    report_search_label: '借り主の名前で検索',
-    report_search_placeholder: '名前…',
     report_outstanding_empty: '現在貸出中の本はありません。',
     report_search_empty: 'この名前の貸出履歴が見つかりません。',
-    report_search_hint: '上に名前を入力すると貸出履歴が表示されます。',
+    report_name_list_empty: '貸出履歴がありません。',
+    report_back: '借り主一覧',
     report_could_not_load: '履歴を読み込めませんでした。',
     report_outstanding_badge: '未返却',
     report_overdue_badge: '延滞',
@@ -2193,10 +2185,7 @@ function switchReportTab_(tab){
     search.className = 'btn btn-primary btn-sm';
     outArea.style.display = 'none';
     searchArea.style.display = '';
-    const input = document.getElementById('reportNameInput');
-    if(input){ input.value = ''; input.focus(); }
-    document.getElementById('reportSearchResults').innerHTML =
-      '<p class="section-sub">'+escapeHtml(t('report_search_hint'))+'</p>';
+    loadReportNameList_();
   }
 }
 
@@ -2220,18 +2209,42 @@ async function fetchOutstanding_(){
   }
 }
 
-async function searchReportByName_(){
-  const name = (document.getElementById('reportNameInput').value || '').trim();
-  const area = document.getElementById('reportSearchResults');
-  if(!name){ area.innerHTML = '<p class="section-sub">'+escapeHtml(t('report_search_hint'))+'</p>'; return; }
-  area.innerHTML = '<p class="section-sub">'+escapeHtml(t('loading'))+'</p>';
+async function loadReportNameList_(){
+  const listEl = document.getElementById('reportNameList');
+  const resultsEl = document.getElementById('reportSearchResults');
+  resultsEl.style.display = 'none';
+  listEl.style.display = '';
+  listEl.innerHTML = '<p class="section-sub">'+escapeHtml(t('loading'))+'</p>';
+  try{
+    const data = await apiFetch_('getHistory', { adminEmail: USER.contact || '' });
+    if(data.error){ listEl.innerHTML = '<p class="section-sub">'+escapeHtml(data.error)+'</p>'; return; }
+    const names = [...new Set((data.history||[]).map(r => r.borrowerName).filter(Boolean))].sort();
+    if(!names.length){ listEl.innerHTML = '<p class="section-sub">'+escapeHtml(t('report_name_list_empty'))+'</p>'; return; }
+    listEl.innerHTML = names.map(name =>
+      `<div class="book-row" style="cursor:pointer;" onclick="selectReportName_(${JSON.stringify(name)})">
+        <div class="meta"><div class="title">${escapeHtml(name)}</div></div>
+        <span style="opacity:0.5;font-size:20px;line-height:1;">›</span>
+      </div>`
+    ).join('');
+  }catch(e){
+    listEl.innerHTML = '<p class="section-sub">'+escapeHtml(t('report_could_not_load'))+'</p>';
+  }
+}
+
+async function selectReportName_(name){
+  const listEl = document.getElementById('reportNameList');
+  const resultsEl = document.getElementById('reportSearchResults');
+  listEl.style.display = 'none';
+  resultsEl.style.display = '';
+  resultsEl.innerHTML = '<p class="section-sub">'+escapeHtml(t('loading'))+'</p>';
   try{
     const data = await apiFetch_('getHistory', { adminEmail: USER.contact || '', name });
-    if(data.error){ area.innerHTML = '<p class="section-sub">'+escapeHtml(data.error)+'</p>'; return; }
-    if(!data.history.length){ area.innerHTML = '<p class="section-sub">'+escapeHtml(t('report_search_empty'))+'</p>'; return; }
-    area.innerHTML = renderHistoryRows_(data.history, false, new Date());
+    const back = `<button class="btn btn-outline btn-sm" style="margin-bottom:16px;" onclick="loadReportNameList_()">← ${escapeHtml(t('report_back'))}</button>`;
+    if(data.error){ resultsEl.innerHTML = back+'<p class="section-sub">'+escapeHtml(data.error)+'</p>'; return; }
+    if(!data.history.length){ resultsEl.innerHTML = back+'<p class="section-sub">'+escapeHtml(t('report_search_empty'))+'</p>'; return; }
+    resultsEl.innerHTML = back+`<h3 class="section-title" style="margin-bottom:12px;">${escapeHtml(name)}</h3>`+renderHistoryRows_(data.history, false, new Date());
   }catch(e){
-    area.innerHTML = '<p class="section-sub">'+escapeHtml(t('report_could_not_load'))+'</p>';
+    resultsEl.innerHTML = '<p class="section-sub">'+escapeHtml(t('report_could_not_load'))+'</p>';
   }
 }
 
