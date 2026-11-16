@@ -1772,7 +1772,7 @@ function renderQueueResults(results){
     let status;
     if(data.error) status = t('error_prefix', { msg: escapeHtml(data.error) });
     else if(data.action==='pending') status = t('status_awaiting_approval');
-    else if(data.action==='borrow') status = t('status_borrowed');
+    else if(data.action==='borrow') status = data.dueDate ? t('due_label', { date: new Date(data.dueDate).toLocaleDateString() }) : t('status_borrowed');
     else status = t('status_returned');
     return `<div class="detail-row"><span>${escapeHtml(q.title)}</span><span>${status}</span></div>`;
   }).join('');
