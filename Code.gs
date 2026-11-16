@@ -846,6 +846,24 @@ function doGet(e) {
         case 'searchUsers':
           result = searchUsers(e.parameter.query);
           break;
+        case 'listUsers':
+          result = listUsers(e.parameter.adminEmail);
+          break;
+        case 'saveUser':
+          result = saveUser(e.parameter.adminEmail, e.parameter.rowIndex, e.parameter['class'], e.parameter.name, e.parameter.parent1, e.parameter.parent2);
+          break;
+        case 'deleteUser':
+          result = deleteUser(e.parameter.adminEmail, e.parameter.rowIndex);
+          break;
+        case 'listAdmins':
+          result = listAdmins(e.parameter.adminEmail);
+          break;
+        case 'saveAdmin':
+          result = saveAdmin(e.parameter.adminEmail, e.parameter.rowIndex, e.parameter.email, e.parameter.name);
+          break;
+        case 'deleteAdmin':
+          result = deleteAdmin(e.parameter.adminEmail, e.parameter.rowIndex, e.parameter.email);
+          break;
         case 'adminLogin':
           result = adminLogin(e.parameter.email, e.parameter.secret);
           break;
@@ -1421,4 +1439,90 @@ function getSummary(adminEmail) {
     due: { count: due.length, items: due },
     dueToday: { count: dueToday.length, items: dueToday }
   };
+}
+
+function listUsers(adminEmail) {
+  if (!adminEmail || !isAdmin_(adminEmail)) return { error: 'Not authorized' };
+  const sh = getSS().getSheetByName(USERS_SHEET);
+  if (!sh) return { users: [] };
+  const data = sh.getDataRange().getValues();
+  const users = [];
+  for (let i = 1; i < data.length; i++) {
+    const r = data[i];
+    if (!r[0] && !r[1] && !r[2] && !r[3]) continue;
+    users.push({ rowIndex: i + 1, class: String(r[0] || ''), name: String(r[1] || ''), parent1: String(r[2] || ''), parent2: String(r[3] || '') });
+  }
+  return { users };
+}
+
+function saveUser(adminEmail, rowIndex, classVal, name, parent1, parent2) {
+  if (!adminEmail || !isAdmin_(adminEmail)) return { error: 'Not authorized' };
+  if (!String(name || '').trim()) return { error: 'Name is required' };
+  const sh = getSS().getSheetByName(USERS_SHEET);
+  if (!sh) return { error: 'User List tab not found — run setupSheets first' };
+  const vals = [[String(classVal || '').trim(), String(name).trim(), String(parent1 || '').trim(), String(parent2 || '').trim()]];
+  const rowNum = parseInt(rowIndex, 10);
+  if (rowNum >= 2) {
+    sh.getRange(rowNum, 1, 1, 4).setValues(vals);
+  } else {
+    sh.appendRow(vals[0]);
+  }
+  CacheService.getScriptCache().remove('lib_users');
+  return { ok: true };
+}
+
+function deleteUser(adminEmail, rowIndex) {
+  if (!adminEmail || !isAdmin_(adminEmail)) return { error: 'Not authorized' };
+  const rowNum = parseInt(rowIndex, 10);
+  if (!rowNum || rowNum < 2) return { error: 'Invalid row' };
+  const sh = getSS().getSheetByName(USERS_SHEET);
+  if (!sh) return { error: 'User List tab not found' };
+  sh.deleteRow(rowNum);
+  CacheService.getScriptCache().remove('lib_users');
+  return { ok: true };
+}
+
+function listAdmins(adminEmail) {
+  if (!adminEmail || !isAdmin_(adminEmail)) return { error: 'Not authorized' };
+  const sh = getSS().getSheetByName(ADMINS_SHEET);
+  if (!sh) return { admins: [] };
+  const data = sh.getDataRange().getValues();
+  const admins = [];
+  for (let i = 1; i < data.length; i++) {
+    const r = data[i];
+    if (!r[0] && !r[1]) continue;
+    admins.push({ rowIndex: i + 1, email: String(r[0] || ''), name: String(r[1] || '') });
+  }
+  return { admins };
+}
+
+function saveAdmin(adminEmail, rowIndex, email, name) {
+  if (!adminEmail || !isAdmin_(adminEmail)) return { error: 'Not authorized' };
+  const cleanEmail = String(email || '').trim().toLowerCase();
+  if (!cleanEmail) return { error: 'Email is required' };
+  const sh = getSS().getSheetByName(ADMINS_SHEET);
+  if (!sh) return { error: 'Admins tab not found' };
+  const vals = [[cleanEmail, String(name || '').trim()]];
+  const rowNum = parseInt(rowIndex, 10);
+  if (rowNum >= 2) {
+    sh.getRange(rowNum, 1, 1, 2).setValues(vals);
+  } else {
+    sh.appendRow(vals[0]);
+  }
+  CacheService.getScriptCache().remove('lib_admins');
+  return { ok: true };
+}
+
+function deleteAdmin(adminEmail, rowIndex, email) {
+  if (!adminEmail || !isAdmin_(adminEmail)) return { error: 'Not authorized' };
+  if (String(adminEmail).trim().toLowerCase() === String(email || '').trim().toLowerCase()) {
+    return { error: "You can't delete your own admin account" };
+  }
+  const rowNum = parseInt(rowIndex, 10);
+  if (!rowNum || rowNum < 2) return { error: 'Invalid row' };
+  const sh = getSS().getSheetByName(ADMINS_SHEET);
+  if (!sh) return { error: 'Admins tab not found' };
+  sh.deleteRow(rowNum);
+  CacheService.getScriptCache().remove('lib_admins');
+  return { ok: true };
 }

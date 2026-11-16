@@ -227,6 +227,7 @@
     <button id="nav-shelf" style="display:none;" data-i18n="nav_shelf" onclick="showScreen('shelf')">Shelf</button>
     <button id="nav-summary" style="display:none;" data-i18n="nav_summary" onclick="showScreen('summary')">Summary</button>
     <button id="nav-report" style="display:none;" data-i18n="nav_report" onclick="showScreen('report')">Report</button>
+    <button id="nav-roster" style="display:none;" data-i18n="nav_roster" onclick="showScreen('roster')">Roster</button>
   </nav>
 
   <main>
@@ -422,6 +423,18 @@
       </div>
       <div id="reportSummaryLine" style="margin-bottom:12px;"></div>
       <div id="reportResultsArea"></div>
+    </section>
+
+    <!-- ROSTER (admin only) -->
+    <section class="screen" id="screen-roster">
+      <h3 class="section-title" data-i18n="roster_title">Roster</h3>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:16px;">
+        <button id="rosterTabUsers" class="btn btn-primary btn-sm" onclick="showRosterTab_('users')">Users</button>
+        <button id="rosterTabAdmins" class="btn btn-outline btn-sm" onclick="showRosterTab_('admins')">Admins</button>
+        <button id="rosterAddBtn" class="btn btn-outline btn-sm" style="margin-left:auto;" onclick="rosterShowAdd_()">+ Add</button>
+      </div>
+      <div id="rosterAddForm" style="display:none;"></div>
+      <div id="rosterList"></div>
     </section>
 
   </main>
@@ -636,7 +649,28 @@ const I18N = {
     patron_parent1: 'Parent 1: {name}',
     patron_parent2: 'Parent 2: {name}',
     patron_searching: 'Searching…',
-    patron_network_fail: 'Could not reach the sheet. Check your connection and try again.'
+    patron_network_fail: 'Could not reach the sheet. Check your connection and try again.',
+
+    nav_roster: 'Roster',
+    roster_title: 'Roster',
+    roster_tab_users: 'Users',
+    roster_tab_admins: 'Admins',
+    roster_add_user: 'Add User',
+    roster_add_admin: 'Add Admin',
+    roster_edit_btn: 'Edit',
+    roster_save_btn: 'Save',
+    roster_saving: 'Saving…',
+    roster_delete_btn: 'Delete',
+    roster_delete_confirm: 'Delete this person?',
+    roster_delete_yes: 'Yes, delete',
+    roster_deleting: 'Deleting…',
+    roster_empty: 'Nothing here yet.',
+    roster_could_not_load: 'Could not load — check your connection.',
+    roster_class_label: 'Class',
+    roster_name_label: 'Name',
+    roster_parent1_label: 'Parent / Guardian 1',
+    roster_parent2_label: 'Parent / Guardian 2',
+    roster_email_label: 'Email'
   },
   ja: {
     brand_tagline: '地域図書館',
@@ -832,7 +866,28 @@ const I18N = {
     patron_parent1: '保護者1: {name}',
     patron_parent2: '保護者2: {name}',
     patron_searching: '検索中…',
-    patron_network_fail: 'シートに接続できませんでした。接続を確認してもう一度お試しください。'
+    patron_network_fail: 'シートに接続できませんでした。接続を確認してもう一度お試しください。',
+
+    nav_roster: '名簿',
+    roster_title: '名簿',
+    roster_tab_users: '利用者',
+    roster_tab_admins: '管理者',
+    roster_add_user: '利用者を追加',
+    roster_add_admin: '管理者を追加',
+    roster_edit_btn: '編集',
+    roster_save_btn: '保存',
+    roster_saving: '保存中…',
+    roster_delete_btn: '削除',
+    roster_delete_confirm: 'この人を削除しますか？',
+    roster_delete_yes: '削除する',
+    roster_deleting: '削除中…',
+    roster_empty: 'データがありません。',
+    roster_could_not_load: '読み込めませんでした。接続を確認してください。',
+    roster_class_label: 'クラス',
+    roster_name_label: '氏名',
+    roster_parent1_label: '保護者1',
+    roster_parent2_label: '保護者2',
+    roster_email_label: 'メール'
   }
 };
 
@@ -1065,7 +1120,7 @@ async function onGateScanSuccess(decodedText){
 }
 
 function showScreen(name){
-  if((name==='shelf' || name==='return' || name==='summary' || name==='report') && !(USER && USER.isAdmin)) name = 'scan';
+  if((name==='shelf' || name==='return' || name==='summary' || name==='report' || name==='roster') && !(USER && USER.isAdmin)) name = 'scan';
   if(name==='scan' && !USER) name = 'admin-login';
   // Leaving the Borrow screen for another tab while an admin had a
   // patron (or family) picked to scan for — clear that pick so coming
@@ -1095,6 +1150,7 @@ function showScreen(name){
   }
   if(name==='summary') loadSummary();
   if(name==='report') loadReport_();
+  if(name==='roster') loadRoster_();
   if(name==='scan'){
     // Clears a stale "Done" confirmation card left over from the last
     // completed batch when switching back to this tab from elsewhere —
@@ -1225,6 +1281,8 @@ function applyAdminUI(isAdmin){
   if(summaryNav) summaryNav.style.display = isAdmin ? '' : 'none';
   const reportNav = document.getElementById('nav-report');
   if(reportNav) reportNav.style.display = isAdmin ? '' : 'none';
+  const rosterNav = document.getElementById('nav-roster');
+  if(rosterNav) rosterNav.style.display = isAdmin ? '' : 'none';
 }
 
 async function loadRemoteConfig(){
@@ -2674,6 +2732,198 @@ async function bootstrapSiteAccess_(){
   }
 }
 bootstrapSiteAccess_();
+
+// ---- ROSTER SCREEN (admin) ----
+let rosterData_ = null;
+let rosterTab_ = 'users'; // 'users' or 'admins'
+let rosterEditRow_ = null;
+
+function loadRoster_() {
+  rosterTab_ = 'users';
+  showRosterTab_('users');
+}
+
+function showRosterTab_(tab) {
+  rosterTab_ = tab;
+  rosterEditRow_ = null;
+  const f = document.getElementById('rosterAddForm');
+  if (f) { f.style.display = 'none'; f.innerHTML = ''; }
+  document.getElementById('rosterTabUsers').className = tab === 'users' ? 'btn btn-primary btn-sm' : 'btn btn-outline btn-sm';
+  document.getElementById('rosterTabAdmins').className = tab === 'admins' ? 'btn btn-primary btn-sm' : 'btn btn-outline btn-sm';
+  document.getElementById('rosterAddBtn').textContent = '+ ' + t(tab === 'users' ? 'roster_add_user' : 'roster_add_admin');
+  fetchRoster_();
+}
+
+async function fetchRoster_() {
+  const area = document.getElementById('rosterList');
+  if (!area) return;
+  area.innerHTML = '<p class="section-sub">' + escapeHtml(t('loading')) + '</p>';
+  try {
+    const action = rosterTab_ === 'users' ? 'listUsers' : 'listAdmins';
+    const data = await apiFetch_(action, { adminEmail: USER.email });
+    if (data.error) throw new Error(data.error);
+    rosterData_ = rosterTab_ === 'users' ? (data.users || []) : (data.admins || []);
+    renderRosterList_();
+  } catch(e) {
+    area.innerHTML = '<p class="section-sub">' + escapeHtml(t('roster_could_not_load')) + '</p>';
+  }
+}
+
+function renderRosterList_() {
+  const area = document.getElementById('rosterList');
+  if (!area) return;
+  if (!rosterData_ || !rosterData_.length) {
+    area.innerHTML = '<p class="section-sub">' + escapeHtml(t('roster_empty')) + '</p>';
+    return;
+  }
+  area.innerHTML = rosterData_.map(u => {
+    if (rosterEditRow_ === u.rowIndex) return rosterFormHtml_(u);
+    if (rosterTab_ === 'users') {
+      const parents = [u.parent1, u.parent2].filter(Boolean).join(' / ');
+      return `<div class="book-row">
+        <div class="meta">
+          <div class="title">${escapeHtml(u.name)}${u.class ? ' <span style="font-weight:normal;font-size:0.85em;color:#999;">· ' + escapeHtml(u.class) + '</span>' : ''}</div>
+          ${parents ? '<div class="sub">' + escapeHtml(parents) + '</div>' : ''}
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="rosterStartEdit_(${u.rowIndex})">${escapeHtml(t('roster_edit_btn'))}</button>
+      </div>`;
+    } else {
+      return `<div class="book-row">
+        <div class="meta">
+          <div class="title">${escapeHtml(u.email)}</div>
+          ${u.name ? '<div class="sub">' + escapeHtml(u.name) + '</div>' : ''}
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="rosterStartEdit_(${u.rowIndex})">${escapeHtml(t('roster_edit_btn'))}</button>
+      </div>`;
+    }
+  }).join('');
+}
+
+function rosterFormHtml_(u) {
+  const isUser = rosterTab_ === 'users';
+  const fields = isUser
+    ? `<div class="field"><label>${escapeHtml(t('roster_class_label'))}</label>
+        <input type="text" id="re-class" value="${escapeHtml(u.class||'')}" placeholder="e.g. Y6"></div>
+       <div class="field"><label>${escapeHtml(t('roster_name_label'))}</label>
+        <input type="text" id="re-name" value="${escapeHtml(u.name||'')}" placeholder="Full name"></div>
+       <div class="field"><label>${escapeHtml(t('roster_parent1_label'))}</label>
+        <input type="text" id="re-parent1" value="${escapeHtml(u.parent1||'')}" placeholder="Parent / Guardian 1"></div>
+       <div class="field"><label>${escapeHtml(t('roster_parent2_label'))}</label>
+        <input type="text" id="re-parent2" value="${escapeHtml(u.parent2||'')}" placeholder="Parent / Guardian 2 (optional)"></div>`
+    : `<div class="field"><label>${escapeHtml(t('roster_email_label'))}</label>
+        <input type="email" id="re-email" value="${escapeHtml(u.email||'')}" placeholder="admin@example.com"></div>
+       <div class="field"><label>${escapeHtml(t('roster_name_label'))}</label>
+        <input type="text" id="re-name" value="${escapeHtml(u.name||'')}" placeholder="Display name (optional)"></div>`;
+  const safeEmail = escapeHtml((u.email||'').replace(/'/g, ''));
+  return `<div class="stamp-card" id="rosterEditCard" style="margin-bottom:12px;">
+    ${fields}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center;">
+      <button class="btn btn-primary btn-sm" id="rosterSaveBtn" onclick="rosterSave_(${u.rowIndex||0})">${escapeHtml(t('roster_save_btn'))}</button>
+      <button class="btn btn-outline btn-sm" onclick="rosterCancelEdit_()">${escapeHtml(t('cancel_btn'))}</button>
+      ${u.rowIndex ? `<button class="btn btn-outline btn-sm" id="rosterDelBtn" onclick="rosterAskDelete_()" style="margin-left:auto;color:#c00;border-color:#c00;">${escapeHtml(t('roster_delete_btn'))}</button>` : ''}
+    </div>
+    ${u.rowIndex ? `<div id="rosterDelConfirm" style="display:none;margin-top:10px;padding:10px;background:#fff0f0;border-radius:6px;font-size:0.9em;">
+      ${escapeHtml(t('roster_delete_confirm'))}
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <button class="btn btn-sm" id="rosterDelYes" style="background:#c00;color:#fff;border:none;" onclick="rosterDelete_(${u.rowIndex}${!isUser ? ',\''+safeEmail+'\'' : ''})">${escapeHtml(t('roster_delete_yes'))}</button>
+        <button class="btn btn-ghost btn-sm" onclick="rosterHideDelete_()">${escapeHtml(t('cancel_btn'))}</button>
+      </div>
+    </div>` : ''}
+    <div id="rosterErrMsg" style="display:none;color:#c00;font-size:0.85em;margin-top:8px;"></div>
+  </div>`;
+}
+
+function rosterStartEdit_(rowIndex) {
+  rosterEditRow_ = rowIndex;
+  const f = document.getElementById('rosterAddForm');
+  if (f) { f.style.display = 'none'; f.innerHTML = ''; }
+  renderRosterList_();
+  document.getElementById('rosterEditCard')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function rosterCancelEdit_() {
+  rosterEditRow_ = null;
+  const f = document.getElementById('rosterAddForm');
+  if (f) { f.style.display = 'none'; f.innerHTML = ''; }
+  renderRosterList_();
+}
+
+function rosterShowAdd_() {
+  rosterEditRow_ = null;
+  renderRosterList_();
+  const f = document.getElementById('rosterAddForm');
+  f.style.display = '';
+  const empty = rosterTab_ === 'users'
+    ? { rowIndex: 0, class: '', name: '', parent1: '', parent2: '' }
+    : { rowIndex: 0, email: '', name: '' };
+  f.innerHTML = rosterFormHtml_(empty);
+  f.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function rosterAskDelete_() {
+  document.getElementById('rosterDelConfirm').style.display = '';
+  document.getElementById('rosterDelBtn').style.display = 'none';
+}
+
+function rosterHideDelete_() {
+  document.getElementById('rosterDelConfirm').style.display = 'none';
+  document.getElementById('rosterDelBtn').style.display = '';
+}
+
+async function rosterSave_(rowIndex) {
+  const btn = document.getElementById('rosterSaveBtn');
+  const errEl = document.getElementById('rosterErrMsg');
+  if (btn) { btn.disabled = true; btn.textContent = t('roster_saving'); }
+  if (errEl) errEl.style.display = 'none';
+  let action, params;
+  if (rosterTab_ === 'users') {
+    const name = (document.getElementById('re-name')?.value || '').trim();
+    if (!name) { document.getElementById('re-name')?.focus(); if (btn) { btn.disabled = false; btn.textContent = t('roster_save_btn'); } return; }
+    action = 'saveUser';
+    params = { adminEmail: USER.email, rowIndex: rowIndex || '',
+      'class': (document.getElementById('re-class')?.value || '').trim(),
+      name,
+      parent1: (document.getElementById('re-parent1')?.value || '').trim(),
+      parent2: (document.getElementById('re-parent2')?.value || '').trim() };
+  } else {
+    const email = (document.getElementById('re-email')?.value || '').trim();
+    if (!email) { document.getElementById('re-email')?.focus(); if (btn) { btn.disabled = false; btn.textContent = t('roster_save_btn'); } return; }
+    action = 'saveAdmin';
+    params = { adminEmail: USER.email, rowIndex: rowIndex || '', email,
+      name: (document.getElementById('re-name')?.value || '').trim() };
+  }
+  try {
+    const result = await apiFetch_(action, params);
+    if (result.error) throw new Error(result.error);
+    rosterEditRow_ = null;
+    const f = document.getElementById('rosterAddForm');
+    if (f) { f.style.display = 'none'; f.innerHTML = ''; }
+    await fetchRoster_();
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = t('roster_save_btn'); }
+    if (errEl) { errEl.textContent = e.message; errEl.style.display = ''; }
+  }
+}
+
+async function rosterDelete_(rowIndex, email) {
+  const yesBtn = document.getElementById('rosterDelYes');
+  if (yesBtn) { yesBtn.disabled = true; yesBtn.textContent = t('roster_deleting'); }
+  const action = rosterTab_ === 'users' ? 'deleteUser' : 'deleteAdmin';
+  const params = rosterTab_ === 'users'
+    ? { adminEmail: USER.email, rowIndex }
+    : { adminEmail: USER.email, rowIndex, email };
+  try {
+    const result = await apiFetch_(action, params);
+    if (result.error) throw new Error(result.error);
+    rosterEditRow_ = null;
+    await fetchRoster_();
+  } catch(e) {
+    if (yesBtn) { yesBtn.disabled = false; yesBtn.textContent = t('roster_delete_yes'); }
+    rosterHideDelete_();
+    const errEl = document.getElementById('rosterErrMsg');
+    if (errEl) { errEl.textContent = e.message; errEl.style.display = ''; }
+  }
+}
 </script>
 </body>
 </html>
