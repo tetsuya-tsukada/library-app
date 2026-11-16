@@ -402,15 +402,24 @@
     <!-- REPORT (admin only) -->
     <section class="screen" id="screen-report">
       <h3 class="section-title" data-i18n="report_title">Borrow History</h3>
-      <div style="display:flex;gap:8px;margin-bottom:16px;">
-        <button class="btn btn-primary btn-sm" id="reportTabOutstanding" data-i18n="report_tab_outstanding" onclick="switchReportTab_('outstanding')">Outstanding</button>
-        <button class="btn btn-outline btn-sm" id="reportTabSearch" data-i18n="report_tab_search" onclick="switchReportTab_('search')">By name</button>
+      <div class="field">
+        <label data-i18n="report_filter_title">Title</label>
+        <input type="text" id="reportTitleFilter" placeholder="…" oninput="applyReportFilters_()">
       </div>
-      <div id="reportOutstandingArea"></div>
-      <div id="reportSearchArea" style="display:none;">
-        <div id="reportNameList"></div>
-        <div id="reportSearchResults" style="display:none;"></div>
+      <div class="field">
+        <label data-i18n="report_filter_borrower">Borrower</label>
+        <input type="text" id="reportBorrowerFilter" placeholder="…" oninput="applyReportFilters_()">
       </div>
+      <div class="field">
+        <label data-i18n="report_filter_status">Status</label>
+        <select id="reportStatusFilter" onchange="applyReportFilters_()">
+          <option value="" data-i18n="report_status_all">All</option>
+          <option value="out" data-i18n="report_status_out">Out</option>
+          <option value="shelf" data-i18n="report_status_shelf">On shelf</option>
+        </select>
+      </div>
+      <div id="reportSummaryLine" style="margin-bottom:12px;"></div>
+      <div id="reportResultsArea"></div>
     </section>
 
   </main>
@@ -458,18 +467,18 @@ const I18N = {
     nav_report: 'Report',
 
     report_title: 'Borrow History',
-    report_tab_outstanding: 'Outstanding',
-    report_tab_search: 'By name',
-    report_outstanding_empty: 'No books currently out — all returned.',
-    report_search_empty: 'No borrow history found for that name.',
-    report_name_list_empty: 'No borrow history yet.',
-    report_back: 'All borrowers',
+    report_filter_title: 'Title',
+    report_filter_borrower: 'Borrower',
+    report_filter_status: 'Status',
+    report_status_all: 'All',
+    report_status_out: 'Out',
+    report_status_shelf: 'On shelf',
+    report_no_results: 'No matching records.',
     report_could_not_load: 'Could not load history.',
     report_outstanding_badge: 'Outstanding',
     report_overdue_badge: 'Overdue',
     report_returned_badge: 'Returned',
     report_borrow_date: 'Borrowed',
-    report_due_date: 'Due',
     report_return_date: 'Returned',
 
     who_login: 'Log in',
@@ -653,18 +662,18 @@ const I18N = {
     nav_report: '記録',
 
     report_title: '貸出履歴',
-    report_tab_outstanding: '未返却',
-    report_tab_search: '氏名で検索',
-    report_outstanding_empty: '現在貸出中の本はありません。',
-    report_search_empty: 'この名前の貸出履歴が見つかりません。',
-    report_name_list_empty: '貸出履歴がありません。',
-    report_back: '借り主一覧',
+    report_filter_title: 'タイトル',
+    report_filter_borrower: '借り主',
+    report_filter_status: 'ステータス',
+    report_status_all: 'すべて',
+    report_status_out: '貸出中',
+    report_status_shelf: '返却済',
+    report_no_results: '該当する記録がありません。',
     report_could_not_load: '履歴を読み込めませんでした。',
     report_outstanding_badge: '未返却',
     report_overdue_badge: '延滞',
     report_returned_badge: '返却済',
     report_borrow_date: '貸出日',
-    report_due_date: '返却期限',
     report_return_date: '返却日',
 
     who_login: 'ログイン',
@@ -2164,89 +2173,48 @@ function renderSummaryDetail(key, label){
 
 // ---- Report screen (admin only) ------------------------------------
 
-function loadReport_(){
-  // Always (re-)load outstanding on each visit; search area starts blank.
-  switchReportTab_('outstanding');
-}
+let reportAllData_ = null;
 
-function switchReportTab_(tab){
-  const outstanding = document.getElementById('reportTabOutstanding');
-  const search = document.getElementById('reportTabSearch');
-  const outArea = document.getElementById('reportOutstandingArea');
-  const searchArea = document.getElementById('reportSearchArea');
-  if(tab === 'outstanding'){
-    outstanding.className = 'btn btn-primary btn-sm';
-    search.className = 'btn btn-outline btn-sm';
-    outArea.style.display = '';
-    searchArea.style.display = 'none';
-    fetchOutstanding_();
-  } else {
-    outstanding.className = 'btn btn-outline btn-sm';
-    search.className = 'btn btn-primary btn-sm';
-    outArea.style.display = 'none';
-    searchArea.style.display = '';
-    loadReportNameList_();
-  }
-}
-
-async function fetchOutstanding_(){
-  const area = document.getElementById('reportOutstandingArea');
-  area.innerHTML = '<p class="section-sub">'+escapeHtml(t('loading'))+'</p>';
-  try{
-    const data = await apiFetch_('getHistory', { adminEmail: USER.contact || '', filter: 'outstanding' });
-    if(data.error){ area.innerHTML = '<p class="section-sub">'+escapeHtml(data.error)+'</p>'; return; }
-    if(!data.history.length){ area.innerHTML = '<p class="section-sub">'+escapeHtml(t('report_outstanding_empty'))+'</p>'; return; }
-    // Sort overdue first (smallest dueDate first), then by dueDate ascending.
-    const now = new Date();
-    const sorted = data.history.slice().sort((a, b) => {
-      const da = a.dueDate ? new Date(a.dueDate) : new Date('9999-12-31');
-      const db = b.dueDate ? new Date(b.dueDate) : new Date('9999-12-31');
-      return da - db;
-    });
-    area.innerHTML = renderHistoryRows_(sorted, true, now);
-  }catch(e){
-    area.innerHTML = '<p class="section-sub">'+escapeHtml(t('report_could_not_load'))+'</p>';
-  }
-}
-
-async function loadReportNameList_(){
-  const listEl = document.getElementById('reportNameList');
-  const resultsEl = document.getElementById('reportSearchResults');
-  resultsEl.style.display = 'none';
-  listEl.style.display = '';
-  listEl.innerHTML = '<p class="section-sub">'+escapeHtml(t('loading'))+'</p>';
+async function loadReport_(){
+  reportAllData_ = null;
+  document.getElementById('reportResultsArea').innerHTML = '<p class="section-sub">'+escapeHtml(t('loading'))+'</p>';
+  document.getElementById('reportSummaryLine').innerHTML = '';
+  document.getElementById('reportTitleFilter').value = '';
+  document.getElementById('reportBorrowerFilter').value = '';
+  document.getElementById('reportStatusFilter').value = '';
   try{
     const data = await apiFetch_('getHistory', { adminEmail: USER.contact || '' });
-    if(data.error){ listEl.innerHTML = '<p class="section-sub">'+escapeHtml(data.error)+'</p>'; return; }
-    const names = [...new Set((data.history||[]).map(r => r.borrowerName).filter(Boolean))].sort();
-    if(!names.length){ listEl.innerHTML = '<p class="section-sub">'+escapeHtml(t('report_name_list_empty'))+'</p>'; return; }
-    listEl.innerHTML = names.map(name =>
-      `<div class="book-row" style="cursor:pointer;" onclick="selectReportName_(${JSON.stringify(name)})">
-        <div class="meta"><div class="title">${escapeHtml(name)}</div></div>
-        <span style="opacity:0.5;font-size:20px;line-height:1;">›</span>
-      </div>`
-    ).join('');
+    if(data.error){ document.getElementById('reportResultsArea').innerHTML = '<p class="section-sub">'+escapeHtml(data.error)+'</p>'; return; }
+    reportAllData_ = data.history || [];
+    applyReportFilters_();
   }catch(e){
-    listEl.innerHTML = '<p class="section-sub">'+escapeHtml(t('report_could_not_load'))+'</p>';
+    document.getElementById('reportResultsArea').innerHTML = '<p class="section-sub">'+escapeHtml(t('report_could_not_load'))+'</p>';
   }
 }
 
-async function selectReportName_(name){
-  const listEl = document.getElementById('reportNameList');
-  const resultsEl = document.getElementById('reportSearchResults');
-  listEl.style.display = 'none';
-  resultsEl.style.display = '';
-  resultsEl.innerHTML = '<p class="section-sub">'+escapeHtml(t('loading'))+'</p>';
-  try{
-    const data = await apiFetch_('getHistory', { adminEmail: USER.contact || '', name });
-    const back = `<button class="btn btn-outline btn-sm" style="margin-bottom:16px;" onclick="loadReportNameList_()">← ${escapeHtml(t('report_back'))}</button>`;
-    if(data.error){ resultsEl.innerHTML = back+'<p class="section-sub">'+escapeHtml(data.error)+'</p>'; return; }
-    if(!data.history.length){ resultsEl.innerHTML = back+'<p class="section-sub">'+escapeHtml(t('report_search_empty'))+'</p>'; return; }
-    resultsEl.innerHTML = back+`<h3 class="section-title" style="margin-bottom:12px;">${escapeHtml(name)}</h3>`+renderHistoryRows_(data.history, false, new Date());
-  }catch(e){
-    resultsEl.innerHTML = '<p class="section-sub">'+escapeHtml(t('report_could_not_load'))+'</p>';
-  }
+function applyReportFilters_(){
+  if(!reportAllData_) return;
+  const titleQ = (document.getElementById('reportTitleFilter').value || '').trim().toLowerCase();
+  const borrowerQ = (document.getElementById('reportBorrowerFilter').value || '').trim().toLowerCase();
+  const statusQ = document.getElementById('reportStatusFilter').value;
+  let rows = reportAllData_;
+  if(titleQ) rows = rows.filter(r => String(r.title||'').toLowerCase().includes(titleQ));
+  if(borrowerQ) rows = rows.filter(r => String(r.borrowerName||'').toLowerCase().includes(borrowerQ));
+  if(statusQ === 'out') rows = rows.filter(r => !r.returnDate);
+  else if(statusQ === 'shelf') rows = rows.filter(r => !!r.returnDate);
+  const total = reportAllData_.length;
+  const out = reportAllData_.filter(r => !r.returnDate).length;
+  document.getElementById('reportSummaryLine').innerHTML =
+    `<span style="font-family:'JetBrains Mono',monospace;font-size:11px;opacity:0.6;">`+
+    escapeHtml(rows.length+' / '+total)+' · '+
+    escapeHtml(t('report_status_out'))+': '+escapeHtml(String(out))+' · '+
+    escapeHtml(t('report_status_shelf'))+': '+escapeHtml(String(total-out))+
+    `</span>`;
+  const area = document.getElementById('reportResultsArea');
+  if(!rows.length){ area.innerHTML = '<p class="section-sub">'+escapeHtml(t('report_no_results'))+'</p>'; return; }
+  area.innerHTML = renderHistoryRows_(rows, true, new Date());
 }
+
 
 // Builds the HTML for a list of history rows.
 // showBorrower: show borrower name (outstanding tab) vs hide (by-name search shows all for one person).
@@ -2268,9 +2236,8 @@ function renderHistoryRows_(rows, showBorrower, now){
     }
     const sub1 = showBorrower ? escapeHtml(r.borrowerName||'') + ' · ' : '';
     const borrowStr = borrowDate ? borrowDate.toLocaleDateString() : '—';
-    const dueStr = dueDate ? dueDate.toLocaleDateString() : '—';
     const returnStr = r.returnDate ? new Date(r.returnDate).toLocaleDateString() : null;
-    const sub2 = sub1 + escapeHtml(t('report_borrow_date')) + ': ' + escapeHtml(borrowStr) + ' · ' + escapeHtml(t('report_due_date')) + ': ' + escapeHtml(dueStr);
+    const sub2 = sub1 + escapeHtml(t('report_borrow_date')) + ': ' + escapeHtml(borrowStr);
     const sub3 = returnStr ? escapeHtml(t('report_return_date')) + ': ' + escapeHtml(returnStr) : '';
     return `<div class="book-row">
       <div class="meta">
