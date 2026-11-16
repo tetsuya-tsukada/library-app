@@ -2760,7 +2760,7 @@ async function fetchRoster_() {
   area.innerHTML = '<p class="section-sub">' + escapeHtml(t('loading')) + '</p>';
   try {
     const action = rosterTab_ === 'users' ? 'listUsers' : 'listAdmins';
-    const data = await apiFetch_(action, { adminEmail: USER.email });
+    const data = await apiFetch_(action, { adminEmail: USER.contact });
     if (data.error) throw new Error(data.error);
     rosterData_ = rosterTab_ === 'users' ? (data.users || []) : (data.admins || []);
     renderRosterList_();
@@ -2880,7 +2880,7 @@ async function rosterSave_(rowIndex) {
     const name = (document.getElementById('re-name')?.value || '').trim();
     if (!name) { document.getElementById('re-name')?.focus(); if (btn) { btn.disabled = false; btn.textContent = t('roster_save_btn'); } return; }
     action = 'saveUser';
-    params = { adminEmail: USER.email, rowIndex: rowIndex || '',
+    params = { adminEmail: USER.contact, rowIndex: rowIndex || '',
       'class': (document.getElementById('re-class')?.value || '').trim(),
       name,
       parent1: (document.getElementById('re-parent1')?.value || '').trim(),
@@ -2889,7 +2889,7 @@ async function rosterSave_(rowIndex) {
     const email = (document.getElementById('re-email')?.value || '').trim();
     if (!email) { document.getElementById('re-email')?.focus(); if (btn) { btn.disabled = false; btn.textContent = t('roster_save_btn'); } return; }
     action = 'saveAdmin';
-    params = { adminEmail: USER.email, rowIndex: rowIndex || '', email,
+    params = { adminEmail: USER.contact, rowIndex: rowIndex || '', email,
       name: (document.getElementById('re-name')?.value || '').trim() };
   }
   try {
@@ -2910,8 +2910,8 @@ async function rosterDelete_(rowIndex, email) {
   if (yesBtn) { yesBtn.disabled = true; yesBtn.textContent = t('roster_deleting'); }
   const action = rosterTab_ === 'users' ? 'deleteUser' : 'deleteAdmin';
   const params = rosterTab_ === 'users'
-    ? { adminEmail: USER.email, rowIndex }
-    : { adminEmail: USER.email, rowIndex, email };
+    ? { adminEmail: USER.contact, rowIndex }
+    : { adminEmail: USER.contact, rowIndex, email };
   try {
     const result = await apiFetch_(action, params);
     if (result.error) throw new Error(result.error);
