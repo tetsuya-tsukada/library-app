@@ -2224,6 +2224,8 @@ const onReportBorrowerSearch_ = debounce_(async function(){
   if(query.length < 2){ listEl.innerHTML = ''; return; }
   try{
     const data = await apiFetch_('searchUsers', { query });
+    // If the input changed while we were fetching (e.g. a candidate was selected), discard.
+    if((document.getElementById('reportBorrowerFilter').value || '').trim() !== query) return;
     const candidates = data.candidates || [];
     if(!candidates.length){ listEl.innerHTML = ''; return; }
     listEl.innerHTML = candidates.map((c, i) =>
