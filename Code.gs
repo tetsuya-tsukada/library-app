@@ -379,6 +379,20 @@ function migrateUserListSchema() {
   throw new Error('User List header does not match the expected old or new schema — check it by hand before migrating.');
 }
 
+// One-time cleanup: deletes all data rows from the Transactions tab while
+// keeping the header. Run once from the Apps Script editor after switching
+// to the new BorrowTimestamp/ReturnTimestamp schema to remove old test rows.
+function clearTransactions() {
+  const sh = getSS().getSheetByName(TX_SHEET);
+  if (!sh) { Logger.log('Transactions tab not found.'); return; }
+  const lastRow = sh.getLastRow();
+  if (lastRow <= 1) { Logger.log('Transactions is already empty.'); return; }
+  sh.deleteRows(2, lastRow - 1);
+  // Also update the header to the new schema in case setupSheets hasn't been run yet.
+  sh.getRange(1, 1, 1, 5).setValues([['BorrowTimestamp', 'ReturnTimestamp', 'ItemID', 'Title', 'BorrowerName']]);
+  Logger.log('Cleared ' + (lastRow - 1) + ' row(s) and updated the header.');
+}
+
 // Safe to run any time, including after books/transactions already have
 // data — unlike setupSheets, this never clears an existing sheet.
 function setupConfigSheet() {
