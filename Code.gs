@@ -186,9 +186,14 @@ const SITE_ACCESS_TTL_HOURS = 24;
 const BORROW_COUNT_COL = 10; // Books sheet: column J
 const ADDED_BY_COL = 11; // Books sheet: column K — admin who added the book
 
+let _ss = null;
 function getSS() {
-  return SHEET_ID ? SpreadsheetApp.openById(SHEET_ID) : SpreadsheetApp.getActiveSpreadsheet();
+  if (_ss) return _ss;
+  _ss = SHEET_ID ? SpreadsheetApp.openById(SHEET_ID) : SpreadsheetApp.getActiveSpreadsheet();
+  return _ss;
 }
+
+const CACHE_TTL_ = 300; // seconds — Config/Admins/Users change rarely
 
 function setupSheets() {
   const ss = getSS();
@@ -506,7 +511,12 @@ function getPublicConfig() {
   return { LoanDays: cfg.LoanDays, MaxBorrowItems: cfg.MaxBorrowItems, BookGroups: cfg.BookGroups || '' };
 }
 
+let _configCache = null;
 function getConfig() {
+  if (_configCache) return _configCache;
+  const sc = CacheService.getScriptCache();
+  const hit = sc.get('lib_config');
+  if (hit) { try { _configCache = JSON.parse(hit); return _configCache; } catch(e) {} }
   const sh = getSS().getSheetByName(CONFIG_SHEET);
   if (!sh) return {};
   const data = sh.getDataRange().getValues();
@@ -519,7 +529,9 @@ function getConfig() {
     const key = String(data[i][0]).trim();
     if (key) cfg[key] = data[i][1];
   }
-  return cfg;
+  try { sc.put('lib_config', JSON.stringify(cfg), CACHE_TTL_); } catch(e) {}
+  _configCache = cfg;
+  return _configCache;
 }
 
 // Simple trigger — runs automatically whenever the Sheet is opened, no
@@ -1019,11 +1031,12 @@ function scanBookBatch(itemsJson, adminEmail) {
     sh.getRange(startRow + 1, 5, count, 6).setValues(values); // columns E:J
     i = j + 1;
   }
-  if (txBorrowRows.length) {
-    const txSh = getSS().getSheetByName(TX_SHEET);
+  let txSh = null;
+  if (txBorrowRows.length || returnItemIds.length) txSh = getSS().getSheetByName(TX_SHEET);
+  if (txBorrowRows.length && txSh) {
     txSh.getRange(txSh.getLastRow() + 1, 1, txBorrowRows.length, 5).setValues(txBorrowRows);
   }
-  updateTxReturn_(returnItemIds, now);
+  updateTxReturn_(returnItemIds, now, txSh);
   appendHistoryBorrows_(historyBorrowRows);
   updateHistoryReturns_(returnItemIds, now);
 
@@ -1058,9 +1071,9 @@ function appendTxBorrow_(itemId, title, name, borrowDate) {
 // Fills ReturnTimestamp for each itemId's most recent open Transactions row
 // (ReturnTimestamp blank). Same scan-from-bottom approach as History so a
 // re-borrowed book always matches its own open row, not a closed one.
-function updateTxReturn_(itemIds, returnDate) {
+function updateTxReturn_(itemIds, returnDate, sh) {
   if (!itemIds.length) return;
-  const sh = getSS().getSheetByName(TX_SHEET);
+  if (!sh) sh = getSS().getSheetByName(TX_SHEET);
   if (!sh) return;
   const data = sh.getDataRange().getValues();
   itemIds.forEach(itemId => {
@@ -1114,9 +1127,20 @@ function updateHistoryReturns_(itemIds, returnDate) {
   });
 }
 
-function isAdmin_(email) {
+let _adminsData = null;
+function getAdminsData_() {
+  if (_adminsData) return _adminsData;
+  const sc = CacheService.getScriptCache();
+  const hit = sc.get('lib_admins');
+  if (hit) { try { _adminsData = JSON.parse(hit); return _adminsData; } catch(e) {} }
   const sh = getSS().getSheetByName(ADMINS_SHEET);
-  const data = sh.getDataRange().getValues();
+  _adminsData = sh ? sh.getDataRange().getValues() : [];
+  try { sc.put('lib_admins', JSON.stringify(_adminsData), CACHE_TTL_); } catch(e) {}
+  return _adminsData;
+}
+
+function isAdmin_(email) {
+  const data = getAdminsData_();
   const target = String(email).trim().toLowerCase();
   for (let i = 1; i < data.length; i++) {
     if (String(data[i][0]).trim().toLowerCase() === target) return true;
@@ -1130,8 +1154,7 @@ function isAdmin_(email) {
 // or to '' if the email isn't a recognized admin at all.
 function getAdminName_(email) {
   if (!email) return '';
-  const sh = getSS().getSheetByName(ADMINS_SHEET);
-  const data = sh.getDataRange().getValues();
+  const data = getAdminsData_();
   const target = String(email).trim().toLowerCase();
   for (let i = 1; i < data.length; i++) {
     if (String(data[i][0]).trim().toLowerCase() === target) {
@@ -1141,10 +1164,16 @@ function getAdminName_(email) {
   return '';
 }
 
+let _usersData = null;
 function getUsersSheet_() {
   const sh = getSS().getSheetByName(USERS_SHEET);
-  const data = sh.getDataRange().getValues();
-  return { sh, data, header: data[0] };
+  if (_usersData) return { sh, data: _usersData, header: _usersData[0] };
+  const sc = CacheService.getScriptCache();
+  const hit = sc.get('lib_users');
+  if (hit) { try { _usersData = JSON.parse(hit); return { sh, data: _usersData, header: _usersData[0] }; } catch(e) {} }
+  _usersData = sh ? sh.getDataRange().getValues() : [];
+  try { sc.put('lib_users', JSON.stringify(_usersData), CACHE_TTL_); } catch(e) {}
+  return { sh, data: _usersData, header: _usersData[0] };
 }
 
 function userRowToObject_(row) {

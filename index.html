@@ -1228,6 +1228,18 @@ function applyAdminUI(isAdmin){
 }
 
 async function loadRemoteConfig(){
+  const RCACHE_KEY = 'stacks_remote_cfg';
+  const RCACHE_TTL = 3600000; // 1 hour
+  try {
+    const cached = JSON.parse(localStorage.getItem(RCACHE_KEY) || 'null');
+    if (cached && cached.ts && (Date.now() - cached.ts) < RCACHE_TTL) {
+      CONFIG.loanDays = cached.loanDays;
+      CONFIG.maxBorrowItems = cached.maxBorrowItems;
+      CONFIG.bookGroups = cached.bookGroups;
+      renderAddBookGroupOptions_();
+      return;
+    }
+  } catch(e) {}
   try{
     const data = await apiFetch_('getConfig');
     CONFIG.loanDays = parseInt(data.LoanDays, 10) || 14;
@@ -1235,6 +1247,7 @@ async function loadRemoteConfig(){
     // Source list for the Add Book form's Group dropdown — hidden if no
     // groups are configured in the Config tab.
     CONFIG.bookGroups = String(data.BookGroups || '').split(',').map(g => g.trim()).filter(Boolean);
+    try { localStorage.setItem(RCACHE_KEY, JSON.stringify({ ts: Date.now(), loanDays: CONFIG.loanDays, maxBorrowItems: CONFIG.maxBorrowItems, bookGroups: CONFIG.bookGroups })); } catch(e) {}
   }catch(e){
     console.warn('Could not load config from the sheet', e);
   }
