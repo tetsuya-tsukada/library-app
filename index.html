@@ -547,6 +547,7 @@ const I18N = {
     borrow_x_items: 'Borrow {n} Item{s}?',
     return_x_items: 'Return {n} Item{s}?',
     confirm_eyebrow: 'Confirm',
+    confirm_for: 'For: {name}',
     borrow_label: 'Borrow',
     return_label: 'Return',
     processing_n_items: 'Processing {n} item{s}…',
@@ -742,6 +743,7 @@ const I18N = {
     borrow_x_items: '{n}冊を貸し出しますか？',
     return_x_items: '{n}冊を返却しますか？',
     confirm_eyebrow: '確認',
+    confirm_for: '{name}のため',
     borrow_label: '貸出',
     return_label: '返却',
     processing_n_items: '{n}冊を処理中…',
@@ -1652,10 +1654,13 @@ function renderScanMoreOrReview_(){
   if(borrowCount && returnCount) headline = t('borrow_x_return_y', { b: borrowCount, r: returnCount });
   else if(borrowCount) headline = t('borrow_x_items', { n: borrowCount });
   else headline = t('return_x_items', { n: returnCount });
+  const patronNames_ = [...new Set(scanQueue.map(q=>q.name).filter(Boolean))];
+  const patronLine_ = patronNames_.length ? `<div class="section-sub" style="margin-bottom:8px;">${escapeHtml(t('confirm_for', { name: patronNames_.join(', ') }))}</div>` : '';
   area.innerHTML = `
     <div class="stamp-card">
       <div class="eyebrow">${escapeHtml(t('confirm_eyebrow'))}</div>
       <h2>${escapeHtml(headline)}</h2>
+      ${patronLine_}
       <div id="confirmList" style="margin:10px 0;"></div>
       <button class="btn btn-primary" id="confirmQueueBtn">${escapeHtml(t('confirm_btn'))}</button>
       <button class="btn btn-outline" style="margin-top:10px;" id="scanMoreBtn">${escapeHtml(t('scan_more_btn'))}</button>
@@ -1718,10 +1723,13 @@ function renderQueueConfirmation(){
   if(borrowCount && returnCount) headline = t('borrow_x_return_y', { b: borrowCount, r: returnCount });
   else if(borrowCount) headline = t('borrow_x_items', { n: borrowCount });
   else headline = t('return_x_items', { n: returnCount });
+  const patronNames_ = [...new Set(scanQueue.map(q=>q.name).filter(Boolean))];
+  const patronLine_ = patronNames_.length ? `<div class="section-sub" style="margin-bottom:8px;">${escapeHtml(t('confirm_for', { name: patronNames_.join(', ') }))}</div>` : '';
   area.innerHTML = `
     <div class="stamp-card">
       <div class="eyebrow">${escapeHtml(t('confirm_eyebrow'))}</div>
       <h2>${escapeHtml(headline)}</h2>
+      ${patronLine_}
       <div id="confirmList" style="margin:10px 0;"></div>
       <button class="btn btn-primary" id="confirmQueueBtn">${escapeHtml(t('confirm_btn'))}</button>
       <button class="btn btn-outline" style="margin-top:10px;" id="cancelQueueBtn">${escapeHtml(t('cancel_btn'))}</button>
