@@ -228,8 +228,15 @@ function setupSheets() {
   let tx = ss.getSheetByName(TX_SHEET);
   if (!tx) {
     tx = ss.insertSheet(TX_SHEET);
-    tx.appendRow(['Timestamp', 'ItemID', 'Title', 'Action', 'BorrowerName', 'BorrowerContact']);
+    tx.appendRow(['BorrowTimestamp', 'ReturnTimestamp', 'ItemID', 'Title', 'BorrowerName']);
     tx.setFrozenRows(1);
+  } else {
+    // Migrate header from the old action-log layout to the new paired format.
+    const h0 = String(tx.getRange(1, 1).getValue()).trim();
+    const h3 = String(tx.getRange(1, 4).getValue()).trim();
+    if (h0 === 'Timestamp' && h3 === 'Action') {
+      tx.getRange(1, 1, 1, 5).setValues([['BorrowTimestamp', 'ReturnTimestamp', 'ItemID', 'Title', 'BorrowerName']]);
+    }
   }
 
   // History: one row per borrow lifecycle — ReturnDate filled in when
@@ -892,7 +899,7 @@ function scanBook(itemId, name, contact, adminEmail) {
     }
     const due = new Date(now.getTime() + getLoanDays_() * 24 * 60 * 60 * 1000);
     sh.getRange(rowNum, 5, 1, 5).setValues([['Borrowed', name, contact || '', now, due]]);
-    logTx_(itemId, title, 'Borrow', name, contact);
+    appendTxBorrow_(itemId, title, name, now);
     incrementBorrowCount_(sh, rowNum);
     appendHistoryBorrows_([[now, itemId, title, name, contact || '', due]]);
     return { action: 'borrow', itemId, title, borrowerName: name, dueDate: due };
@@ -901,7 +908,7 @@ function scanBook(itemId, name, contact, adminEmail) {
     const prevName = data[row][5];
     const prevContact = data[row][6];
     sh.getRange(rowNum, 5, 1, 5).setValues([['Available', '', '', '', '']]);
-    logTx_(itemId, title, 'Return', prevName, prevContact);
+    updateTxReturn_([itemId], now);
     updateHistoryReturns_([itemId], now);
     return { action: 'return', itemId, title, borrowerName: prevName };
   }
@@ -913,8 +920,6 @@ function scanBook(itemId, name, contact, adminEmail) {
 // data, then writes back only the rows that actually changed (grouped into
 // contiguous runs so a batch of adjacent rows is still just one write) —
 // never touching rows this batch didn't modify.
-// Transactions rows are appended in one batched write instead of one per
-// item.
 function scanBookBatch(itemsJson, adminEmail) {
   let items;
   try {
@@ -942,7 +947,7 @@ function scanBookBatch(itemsJson, adminEmail) {
   }
 
   const touchedRows = []; // indices into `data` whose columns E:J changed
-  const txRows = [];
+  const txBorrowRows = [];
   const historyBorrowRows = [];
   const returnItemIds = [];
   const results = [];
@@ -970,7 +975,7 @@ function scanBookBatch(itemsJson, adminEmail) {
       data[row][7] = now; data[row][8] = due;
       data[row][9] = (parseInt(data[row][9], 10) || 0) + 1;
       touchedRows.push(row);
-      txRows.push([now, itemId, title, 'Borrow', name, contact]);
+      txBorrowRows.push([now, '', itemId, title, name]);
       historyBorrowRows.push([now, itemId, title, name, contact || '', due]);
       results.push({ action: 'borrow', itemId, title, borrowerName: name, dueDate: due });
     } else {
@@ -980,7 +985,6 @@ function scanBookBatch(itemsJson, adminEmail) {
       data[row][4] = 'Available'; data[row][5] = ''; data[row][6] = '';
       data[row][7] = ''; data[row][8] = '';
       touchedRows.push(row);
-      txRows.push([now, itemId, title, 'Return', prevName, prevContact]);
       returnItemIds.push(itemId);
       results.push({ action: 'return', itemId, title, borrowerName: prevName });
     }
@@ -1001,10 +1005,11 @@ function scanBookBatch(itemsJson, adminEmail) {
     sh.getRange(startRow + 1, 5, count, 6).setValues(values); // columns E:J
     i = j + 1;
   }
-  if (txRows.length) {
+  if (txBorrowRows.length) {
     const txSh = getSS().getSheetByName(TX_SHEET);
-    txSh.getRange(txSh.getLastRow() + 1, 1, txRows.length, 6).setValues(txRows);
+    txSh.getRange(txSh.getLastRow() + 1, 1, txBorrowRows.length, 5).setValues(txBorrowRows);
   }
+  updateTxReturn_(returnItemIds, now);
   appendHistoryBorrows_(historyBorrowRows);
   updateHistoryReturns_(returnItemIds, now);
 
@@ -1028,9 +1033,31 @@ function countActiveLoans_(name) {
   return count;
 }
 
-function logTx_(itemId, title, action, name, contact) {
+// Appends a new borrow row [borrowDate, '', itemId, title, name].
+// ReturnTimestamp is left blank and filled in later by updateTxReturn_.
+function appendTxBorrow_(itemId, title, name, borrowDate) {
   const sh = getSS().getSheetByName(TX_SHEET);
-  sh.appendRow([new Date(), itemId, title, action, name || '', contact || '']);
+  if (!sh) return;
+  sh.appendRow([borrowDate, '', itemId, title, name || '']);
+}
+
+// Fills ReturnTimestamp for each itemId's most recent open Transactions row
+// (ReturnTimestamp blank). Same scan-from-bottom approach as History so a
+// re-borrowed book always matches its own open row, not a closed one.
+function updateTxReturn_(itemIds, returnDate) {
+  if (!itemIds.length) return;
+  const sh = getSS().getSheetByName(TX_SHEET);
+  if (!sh) return;
+  const data = sh.getDataRange().getValues();
+  itemIds.forEach(itemId => {
+    for (let i = data.length - 1; i >= 1; i--) {
+      if (String(data[i][2]).trim() === String(itemId).trim() && !data[i][1]) {
+        sh.getRange(i + 1, 2).setValue(returnDate);
+        data[i][1] = returnDate;
+        break;
+      }
+    }
+  });
 }
 
 // Bumped once per completed borrow — an admin's immediate scan, or a
