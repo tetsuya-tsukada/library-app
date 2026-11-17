@@ -2495,6 +2495,7 @@ const onScanPatronSearchInput = debounce_(async function(){
   listEl.innerHTML = '<p style="opacity:0.6;font-size:13px;">'+escapeHtml(t('patron_searching'))+'</p>';
   try{
     const data = await apiFetch_('searchUsers', { query });
+    if(document.getElementById('scanPatronSearch').value.trim() !== query) return;
     renderPatronCandidates_(data.candidates || [], listEl, 'scanPatronSearch');
   }catch(e){
     listEl.innerHTML = '<div class="error-card">'+escapeHtml(t('patron_network_fail'))+'</div>';
