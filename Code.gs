@@ -1205,7 +1205,8 @@ function rowKey_(r) {
  */
 function searchUsers(query) {
   const target = String(query || '').trim().toLowerCase();
-  if (target.length < 4) return { candidates: [] };
+  const minLen = /[^\x00-\x7F]/.test(target) ? 1 : 4;
+  if (target.length < minLen) return { candidates: [] };
   const { data } = getUsersSheet_();
   const rows = [];
   const seenRows = {};

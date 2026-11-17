@@ -289,7 +289,10 @@
       <div id="adminPatronPicker" style="display:none;">
         <div class="field">
           <label data-i18n="find_patron_label">Find patron</label>
-          <input type="text" id="scanPatronSearch" placeholder="Search by name…" data-i18n-placeholder="search_by_name_placeholder" oninput="onScanPatronSearchInput()">
+          <input type="text" id="scanPatronSearch" placeholder="Search by name…" data-i18n-placeholder="search_by_name_placeholder"
+            oninput="if(!scanPatronComposing_) onScanPatronSearchInput()"
+            oncompositionstart="scanPatronComposing_=true"
+            oncompositionend="scanPatronComposing_=false; onScanPatronSearchInput()">
         </div>
         <div id="scanPatronResults"></div>
       </div>
@@ -437,7 +440,9 @@
       <div class="field">
         <label data-i18n="report_filter_borrower">Borrower</label>
         <input type="text" id="reportBorrowerFilter" placeholder="…" autocomplete="off"
-          oninput="applyReportFilters_(); onReportBorrowerSearch_()">
+          oninput="applyReportFilters_(); if(!reportBorrowerComposing_) onReportBorrowerSearch_()"
+          oncompositionstart="reportBorrowerComposing_=true"
+          oncompositionend="reportBorrowerComposing_=false; onReportBorrowerSearch_()">
         <div id="reportBorrowerResults"></div>
       </div>
       <div class="field">
@@ -2335,10 +2340,15 @@ function applyReportFilters_(){
   area.innerHTML = renderHistoryRows_(rows, true, new Date());
 }
 
+let scanPatronComposing_ = false;
+let reportBorrowerComposing_ = false;
+// Japanese names can be 1–2 chars; use a lower minimum for non-ASCII input.
+function minQueryLen_(q){ return /[^\x00-\x7F]/.test(q) ? 1 : 4; }
+
 const onReportBorrowerSearch_ = debounce_(async function(){
   const query = (document.getElementById('reportBorrowerFilter').value || '').trim();
   const listEl = document.getElementById('reportBorrowerResults');
-  if(query.length < 4){ listEl.innerHTML = ''; return; }
+  if(query.length < minQueryLen_(query)){ listEl.innerHTML = ''; return; }
   try{
     const data = await apiFetch_('searchUsers', { query });
     // If the input changed while we were fetching (e.g. a candidate was selected), discard.
@@ -2481,7 +2491,7 @@ function renderPatronCandidates_(candidates, listEl, searchInputId){
 const onScanPatronSearchInput = debounce_(async function(){
   const query = document.getElementById('scanPatronSearch').value.trim();
   const listEl = document.getElementById('scanPatronResults');
-  if(query.length < 4){ listEl.innerHTML = ''; return; }
+  if(query.length < minQueryLen_(query)){ listEl.innerHTML = ''; return; }
   listEl.innerHTML = '<p style="opacity:0.6;font-size:13px;">'+escapeHtml(t('patron_searching'))+'</p>';
   try{
     const data = await apiFetch_('searchUsers', { query });
