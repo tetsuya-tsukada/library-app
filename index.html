@@ -49,6 +49,21 @@
   }
   .lang-toggle:active{opacity:1;}
 
+  .admin-menu{position:relative;}
+  .admin-dropdown{
+    position:absolute;right:0;top:calc(100% + 6px);
+    background:var(--ink-2);border:1px solid var(--line);border-radius:4px;
+    min-width:110px;z-index:200;overflow:hidden;
+  }
+  .admin-dropdown button{
+    display:block;width:100%;background:none;border:none;
+    color:var(--paper);opacity:0.8;
+    font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:1px;
+    text-transform:uppercase;text-align:left;
+    padding:10px 14px;cursor:pointer;
+  }
+  .admin-dropdown button:hover{opacity:1;background:rgba(255,255,255,0.05);}
+
   main{flex:1;padding:20px;}
   .screen{display:none;}
   .screen.active{display:block;}
@@ -217,6 +232,13 @@
     <div class="brand">Stacks<small data-i18n="brand_tagline">Community Library</small></div>
     <div style="display:flex;align-items:center;gap:10px;">
       <button type="button" class="lang-toggle" id="langToggle" onclick="toggleLanguage()">日本語</button>
+      <div class="admin-menu" id="adminMenu" style="display:none;">
+        <button type="button" class="lang-toggle" id="adminMenuBtn" onclick="toggleAdminMenu_()">Admin</button>
+        <div class="admin-dropdown" id="adminDropdown" style="display:none;">
+          <button type="button" data-i18n="nav_report" onclick="showScreen('report');toggleAdminMenu_(false)">Report</button>
+          <button type="button" data-i18n="nav_roster" onclick="showScreen('roster');toggleAdminMenu_(false)">Roster</button>
+        </div>
+      </div>
       <div class="who" id="whoBadge" onclick="handleWhoBadgeClick()">Log in</div>
     </div>
   </header>
@@ -226,8 +248,6 @@
     <button id="nav-return" style="display:none;" data-i18n="nav_return" onclick="showScreen('return')">Return</button>
     <button id="nav-shelf" style="display:none;" data-i18n="nav_shelf" onclick="showScreen('shelf')">Shelf</button>
     <button id="nav-summary" style="display:none;" data-i18n="nav_summary" onclick="showScreen('summary')">Summary</button>
-    <button id="nav-report" style="display:none;" data-i18n="nav_report" onclick="showScreen('report')">Report</button>
-    <button id="nav-roster" style="display:none;" data-i18n="nav_roster" onclick="showScreen('roster')">Roster</button>
   </nav>
 
   <main>
@@ -1132,6 +1152,8 @@ function showScreen(name){
   }
   const loadingEl = document.getElementById('appLoading');
   if(loadingEl) loadingEl.style.display = 'none';
+  const adminDd = document.getElementById('adminDropdown');
+  if(adminDd) adminDd.style.display = 'none';
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('nav.topnav button').forEach(b=>b.classList.remove('active'));
   const el = document.getElementById('screen-'+name);
@@ -1277,11 +1299,22 @@ function applyAdminUI(isAdmin){
   if(returnNav) returnNav.style.display = isAdmin ? '' : 'none';
   const summaryNav = document.getElementById('nav-summary');
   if(summaryNav) summaryNav.style.display = isAdmin ? '' : 'none';
-  const reportNav = document.getElementById('nav-report');
-  if(reportNav) reportNav.style.display = isAdmin ? '' : 'none';
-  const rosterNav = document.getElementById('nav-roster');
-  if(rosterNav) rosterNav.style.display = isAdmin ? '' : 'none';
+  const adminMenu = document.getElementById('adminMenu');
+  if(adminMenu) adminMenu.style.display = isAdmin ? '' : 'none';
 }
+
+function toggleAdminMenu_(open){
+  const dd = document.getElementById('adminDropdown');
+  if(!dd) return;
+  dd.style.display = (open === false || dd.style.display !== 'none') ? 'none' : 'block';
+}
+document.addEventListener('click', function(e){
+  const menu = document.getElementById('adminMenu');
+  if(menu && !menu.contains(e.target)){
+    const dd = document.getElementById('adminDropdown');
+    if(dd) dd.style.display = 'none';
+  }
+});
 
 async function loadRemoteConfig(){
   const RCACHE_KEY = 'stacks_remote_cfg';
