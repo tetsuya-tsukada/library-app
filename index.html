@@ -2486,7 +2486,7 @@ async function actAsFamily_(candidate){
 // then one confirm commits the whole batch.
 async function actAsTeacherClass_(candidate){
   try{
-    const data = await apiFetch_('getClassStudents', { classVal: candidate.class || '', subClass: candidate.subClass || '' });
+    const data = await apiFetch_('getClassStudents', { teacherName: candidate.name });
     const students = (data.students || []).map(s => ({ name: s.name, class: s.class, subClass: s.subClass || '', contact: s.parent1 || s.name }));
     if(!students.length){ flashScanNote_(t('teacher_class_no_students')); return; }
     ACTING_AS = { name: candidate.name, contact: contactOf_(candidate), children: students, guardians: [], type: 'teacherClass' };
