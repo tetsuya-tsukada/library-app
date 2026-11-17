@@ -990,29 +990,20 @@ function clearSiteAccess_(){
   localStorage.removeItem(SITE_ACCESS_KEY);
 }
 
-// Every backend call goes through this so the unlocked device's code is
-// never forgotten on some call site — action=verifySiteCode is the one
-// exception (it's how a device gets a code validated in the first place).
-function apiUrl_(action, params){
-  let url = CONFIG.apiUrl + '?action=' + encodeURIComponent(action);
-  if(SITE_ACCESS && SITE_ACCESS.code) url += '&siteCode=' + encodeURIComponent(SITE_ACCESS.code);
+// Every ordinary API call funnels through here. Uses POST so credentials
+// (siteCode, adminEmail, secret) are sent in the request body instead of
+// the URL — keeping them out of browser history and Apps Script logs.
+// action=verifySiteCode is handled separately by verifySiteCodePost_ below
+// since it runs before SITE_ACCESS is established.
+async function apiFetch_(action, params){
+  const body = new URLSearchParams({ action });
+  if(SITE_ACCESS && SITE_ACCESS.code) body.append('siteCode', SITE_ACCESS.code);
   if(params){
     Object.keys(params).forEach(k => {
-      if(params[k] !== undefined && params[k] !== null) url += '&' + k + '=' + encodeURIComponent(params[k]);
+      if(params[k] !== undefined && params[k] !== null) body.append(k, String(params[k]));
     });
   }
-  return url;
-}
-
-// Every ordinary API call (everything but verifySiteCode itself, which
-// doesn't need this) funnels through here so a code invalidated
-// server-side mid-session — see Code.gs's siteAccessInvalid flag — kicks
-// this device back to the gate right away, the same as a stale cached
-// code caught on a fresh page load in bootstrapSiteAccess_. Reloads
-// instead of swapping screens in place so it re-runs that exact same,
-// already-tested path rather than duplicating it here.
-async function apiFetch_(action, params){
-  const res = await fetch(apiUrl_(action, params));
+  const res = await fetch(CONFIG.apiUrl, { method:'POST', body });
   const data = await res.json();
   if(data && data.siteAccessInvalid){
     clearSiteAccess_();
@@ -1020,6 +1011,14 @@ async function apiFetch_(action, params){
     return new Promise(()=>{}); // page is reloading — never resolve so the caller can't act on this stale response
   }
   return data;
+}
+
+// verifySiteCode calls happen before SITE_ACCESS exists (can't use
+// apiFetch_), but still use POST to keep the code out of the URL.
+async function verifySiteCodePost_(code){
+  const body = new URLSearchParams({ action:'verifySiteCode', code });
+  const res = await fetch(CONFIG.apiUrl, { method:'POST', body });
+  return res.json();
 }
 let html5QrCode = null;
 let scanning = false;
@@ -1103,8 +1102,7 @@ async function onGateScanSuccess(decodedText){
   gateScanning = false;
   statusEl.textContent = t('gate_checking');
   try{
-    const res = await fetch(apiUrl_('verifySiteCode', { code }));
-    const data = await res.json();
+    const data = await verifySiteCodePost_(code);
     if(data.error || !data.ok){
       statusEl.textContent = data.error || t('gate_invalid');
       return;
@@ -2300,7 +2298,7 @@ function applyReportFilters_(){
 const onReportBorrowerSearch_ = debounce_(async function(){
   const query = (document.getElementById('reportBorrowerFilter').value || '').trim();
   const listEl = document.getElementById('reportBorrowerResults');
-  if(query.length < 2){ listEl.innerHTML = ''; return; }
+  if(query.length < 4){ listEl.innerHTML = ''; return; }
   try{
     const data = await apiFetch_('searchUsers', { query });
     // If the input changed while we were fetching (e.g. a candidate was selected), discard.
@@ -2443,7 +2441,7 @@ function renderPatronCandidates_(candidates, listEl, searchInputId){
 const onScanPatronSearchInput = debounce_(async function(){
   const query = document.getElementById('scanPatronSearch').value.trim();
   const listEl = document.getElementById('scanPatronResults');
-  if(query.length < 2){ listEl.innerHTML = ''; return; }
+  if(query.length < 4){ listEl.innerHTML = ''; return; }
   listEl.innerHTML = '<p style="opacity:0.6;font-size:13px;">'+escapeHtml(t('patron_searching'))+'</p>';
   try{
     const data = await apiFetch_('searchUsers', { query });
@@ -2703,8 +2701,7 @@ async function bootstrapSiteAccess_(){
   if(urlCode){
     window.history.replaceState({}, '', window.location.origin + window.location.pathname);
     try{
-      const res = await fetch(apiUrl_('verifySiteCode', { code: urlCode }));
-      const data = await res.json();
+      const data = await verifySiteCodePost_(urlCode);
       if(data.ok) saveSiteAccess_(urlCode, data.ttlHours || 24);
     }catch(e){ /* fall through to the normal gate check below */ }
   }
@@ -2716,8 +2713,7 @@ async function bootstrapSiteAccess_(){
     // unlocked gets sent back to the gate on its very next load instead
     // of quietly working until its TTL happens to run out.
     try{
-      const res = await fetch(apiUrl_('verifySiteCode', { code: SITE_ACCESS.code }));
-      const data = await res.json();
+      const data = await verifySiteCodePost_(SITE_ACCESS.code);
       if(!data.ok) clearSiteAccess_();
     }catch(e){ /* network hiccup during the check itself — keep the
                   cached access rather than lock the device out; a

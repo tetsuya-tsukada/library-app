@@ -801,88 +801,56 @@ const SITE_ACCESS_QR_HTML = `<!DOCTYPE html>
   </script>
 </body></html>`;
 
-function doGet(e) {
-  const action = e.parameter.action;
-  let result;
-  try {
-    // Every action except verifySiteCode itself requires a valid,
-    // currently-configured site access code — see "HOW SITE ACCESS
-    // WORKS" above. This runs before the switch below on purpose, so
-    // adding a new case here can never accidentally skip the gate.
-    if (action !== 'verifySiteCode' && !isValidSiteCode_(e.parameter.siteCode)) {
-      // siteAccessInvalid lets the frontend tell this specific case apart
-      // from any other error and force the device back to the gate
-      // screen, without depending on matching this exact message text.
-      result = { error: 'Security code required — scan the QR code posted in the library room.', siteAccessInvalid: true };
-    } else {
-      switch (action) {
-        case 'lookup':
-          result = lookupBook(e.parameter.itemId);
-          break;
-        case 'scan':
-          result = scanBook(e.parameter.itemId, e.parameter.name, e.parameter.contact, e.parameter.adminEmail);
-          break;
-        case 'scanBatch':
-          result = scanBookBatch(e.parameter.items, e.parameter.adminEmail);
-          break;
-        case 'list':
-          result = listBooks();
-          break;
-        case 'addBook':
-          result = addBook(e.parameter.itemId, e.parameter.title, e.parameter.author, e.parameter.group, e.parameter.adminEmail);
-          break;
-        case 'myLoans':
-          result = myLoans(e.parameter.names);
-          break;
-        case 'getSummary':
-          result = getSummary(e.parameter.adminEmail);
-          break;
-        case 'getHistory':
-          result = getHistory(e.parameter.adminEmail, e.parameter.filter, e.parameter.name);
-          break;
-        case 'getConfig':
-          result = getPublicConfig();
-          break;
-        case 'searchUsers':
-          result = searchUsers(e.parameter.query);
-          break;
-        case 'listUsers':
-          result = listUsers(e.parameter.adminEmail);
-          break;
-        case 'saveUser':
-          result = saveUser(e.parameter.adminEmail, e.parameter.rowIndex, e.parameter['class'], e.parameter.name, e.parameter.parent1, e.parameter.parent2);
-          break;
-        case 'deleteUser':
-          result = deleteUser(e.parameter.adminEmail, e.parameter.rowIndex);
-          break;
-        case 'listAdmins':
-          result = listAdmins(e.parameter.adminEmail);
-          break;
-        case 'saveAdmin':
-          result = saveAdmin(e.parameter.adminEmail, e.parameter.rowIndex, e.parameter.email, e.parameter.name);
-          break;
-        case 'deleteAdmin':
-          result = deleteAdmin(e.parameter.adminEmail, e.parameter.rowIndex, e.parameter.email);
-          break;
-        case 'adminLogin':
-          result = adminLogin(e.parameter.email, e.parameter.secret);
-          break;
-        case 'verifyAdmin':
-          result = verifyAdmin(e.parameter.email);
-          break;
-        case 'verifySiteCode':
-          result = verifySiteCode(e.parameter.code);
-          break;
-        default:
-          result = { error: 'Unknown action' };
-      }
-    }
-  } catch (err) {
-    result = { error: err.message };
+// Shared handler for both doGet and doPost — receives the already-parsed
+// parameter map so either entry point works without duplicating the switch.
+function handleRequest_(p) {
+  const action = p.action;
+  // Every action except verifySiteCode itself requires a valid,
+  // currently-configured site access code — see "HOW SITE ACCESS
+  // WORKS" above. This runs before the switch below on purpose, so
+  // adding a new case here can never accidentally skip the gate.
+  if (action !== 'verifySiteCode' && !isValidSiteCode_(p.siteCode)) {
+    // siteAccessInvalid lets the frontend tell this specific case apart
+    // from any other error and force the device back to the gate
+    // screen, without depending on matching this exact message text.
+    return { error: 'Security code required — scan the QR code posted in the library room.', siteAccessInvalid: true };
   }
+  switch (action) {
+    case 'lookup':      return lookupBook(p.itemId);
+    case 'scan':        return scanBook(p.itemId, p.name, p.contact, p.adminEmail);
+    case 'scanBatch':   return scanBookBatch(p.items, p.adminEmail);
+    case 'list':        return listBooks();
+    case 'addBook':     return addBook(p.itemId, p.title, p.author, p.group, p.adminEmail);
+    case 'myLoans':     return myLoans(p.names);
+    case 'getSummary':  return getSummary(p.adminEmail);
+    case 'getHistory':  return getHistory(p.adminEmail, p.filter, p.name);
+    case 'getConfig':   return getPublicConfig();
+    case 'searchUsers': return searchUsers(p.query);
+    case 'listUsers':   return listUsers(p.adminEmail);
+    case 'saveUser':    return saveUser(p.adminEmail, p.rowIndex, p['class'], p.name, p.parent1, p.parent2);
+    case 'deleteUser':  return deleteUser(p.adminEmail, p.rowIndex);
+    case 'listAdmins':  return listAdmins(p.adminEmail);
+    case 'saveAdmin':   return saveAdmin(p.adminEmail, p.rowIndex, p.email, p.name);
+    case 'deleteAdmin': return deleteAdmin(p.adminEmail, p.rowIndex, p.email);
+    case 'adminLogin':  return adminLogin(p.email, p.secret);
+    case 'verifyAdmin': return verifyAdmin(p.email);
+    case 'verifySiteCode': return verifySiteCode(p.code);
+    default:            return { error: 'Unknown action' };
+  }
+}
+
+function respond_(params) {
+  let result;
+  try { result = handleRequest_(params); } catch (err) { result = { error: err.message }; }
   return ContentService.createTextOutput(JSON.stringify(result))
     .setMimeType(ContentService.MimeType.JSON);
 }
+
+// Both GET and POST are accepted so old unlocked devices (cached siteCode)
+// keep working while the frontend transitions to POST-only. New requests
+// from the app always use POST — credentials never appear in the URL.
+function doGet(e)  { return respond_(e.parameter); }
+function doPost(e) { return respond_(e.parameter); }
 
 function getBooksSheet_() {
   const sh = getSS().getSheetByName(BOOKS_SHEET);
@@ -1228,17 +1196,16 @@ function rowKey_(r) {
  * a loose substring match instead of requiring an exact identifier.
  * That means anyone who can reach the web app URL — published in this
  * public repo's index.html — can enumerate rows of this roster (names,
- * classes, parent names) without signing in, by trying short/common
- * substrings. The 2-character minimum and 25-result cap below raise the
- * bar slightly but don't prevent a determined, scripted attempt. This
- * roster no longer includes email/phone, which meaningfully reduces
+ * classes, parent names) without signing in, by trying substrings. The
+ * 4-character minimum and 25-result cap below raise the bar against
+ * scripted enumeration (256× more combinations than a 2-char minimum).
+ * The roster no longer includes email/phone, which meaningfully reduces
  * what's exposed here, but names alone are still worth being mindful
- * of for a roster of children — ask if you want this hardened further
- * (a longer minimum query, or rate limiting).
+ * of for a roster of children.
  */
 function searchUsers(query) {
   const target = String(query || '').trim().toLowerCase();
-  if (target.length < 2) return { candidates: [] };
+  if (target.length < 4) return { candidates: [] };
   const { data } = getUsersSheet_();
   const rows = [];
   const seenRows = {};
