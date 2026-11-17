@@ -1437,8 +1437,11 @@ function updateScanIdentityBanner(){
   // swap to a different patron for the next round without leaving this
   // screen. Hidden while actually scanning, though, to keep that screen
   // simple and focused on the camera.
+  // Hide the patron search when in teacher class mode — the student list
+  // is shown directly via promptFamilyRoundMember_, no search needed.
+  const inClassMode = !!(ACTING_AS && ACTING_AS.type === 'teacherClass');
   const pickerEl = document.getElementById('adminPatronPicker');
-  if(pickerEl) pickerEl.style.display = (USER && USER.matchType === 'admin' && !scanning) ? 'block' : 'none';
+  if(pickerEl) pickerEl.style.display = (USER && USER.matchType === 'admin' && !scanning && !inClassMode) ? 'block' : 'none';
   // Same reasoning applies to the scan button itself: an admin with no
   // patron picked has nothing to scan for, so hide it until ACTING_AS is
   // set. For a family, it stays hidden until this round's member is also
