@@ -425,6 +425,7 @@
     <section class="screen" id="screen-summary">
       <h3 class="section-title" data-i18n="summary_title">Summary</h3>
       <p class="section-sub" data-i18n="summary_sub">Tap a number to see details.</p>
+      <button class="btn btn-ghost" data-i18n="refresh_btn" onclick="loadSummary()">Refresh</button>
       <div id="summaryTiles"></div>
       <div class="divider"></div>
       <div id="summaryDetail"></div>
@@ -1186,7 +1187,7 @@ function showScreen(name){
     setAddBookFormOpen_(false);
     if(!shelfLoaded_) loadShelf();
   }
-  if(name==='summary' && !summaryLoaded_) loadSummary();
+  if(name==='summary') loadSummary();
   if(name==='report' && !reportLoaded_) loadReport_();
   if(name==='roster' && !rosterLoaded_) loadRoster_();
   if(name==='scan'){
