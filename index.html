@@ -1344,6 +1344,7 @@ async function loadRemoteConfig(){
       CONFIG.loanDays = cached.loanDays;
       CONFIG.maxBorrowItems = cached.maxBorrowItems;
       CONFIG.bookGroups = cached.bookGroups;
+      CONFIG.classGroups = cached.classGroups || [];
       renderAddBookGroupOptions_();
       return;
     }
@@ -1352,10 +1353,9 @@ async function loadRemoteConfig(){
     const data = await apiFetch_('getConfig');
     CONFIG.loanDays = parseInt(data.LoanDays, 10) || 14;
     CONFIG.maxBorrowItems = parseInt(data.MaxBorrowItems, 10) || 4;
-    // Source list for the Add Book form's Group dropdown — hidden if no
-    // groups are configured in the Config tab.
     CONFIG.bookGroups = String(data.BookGroups || '').split(',').map(g => g.trim()).filter(Boolean);
-    try { localStorage.setItem(RCACHE_KEY, JSON.stringify({ ts: Date.now(), loanDays: CONFIG.loanDays, maxBorrowItems: CONFIG.maxBorrowItems, bookGroups: CONFIG.bookGroups })); } catch(e) {}
+    CONFIG.classGroups = String(data.ClassGroups || '').split(',').map(g => g.trim()).filter(Boolean);
+    try { localStorage.setItem(RCACHE_KEY, JSON.stringify({ ts: Date.now(), loanDays: CONFIG.loanDays, maxBorrowItems: CONFIG.maxBorrowItems, bookGroups: CONFIG.bookGroups, classGroups: CONFIG.classGroups })); } catch(e) {}
   }catch(e){
     console.warn('Could not load config from the sheet', e);
   }
@@ -2864,7 +2864,10 @@ function rosterFormHtml_(u) {
   const isUser = rosterTab_ === 'users';
   const fields = isUser
     ? `<div class="field"><label>${escapeHtml(t('roster_class_label'))}</label>
-        <input type="text" id="re-class" value="${escapeHtml(u.class||'')}" placeholder="e.g. Y6"></div>
+        ${(CONFIG.classGroups||[]).length
+          ? `<select id="re-class"><option value=""></option>${(CONFIG.classGroups||[]).map(g=>`<option value="${escapeHtml(g)}"${g===u.class?' selected':''}>${escapeHtml(g)}</option>`).join('')}</select>`
+          : `<input type="text" id="re-class" value="${escapeHtml(u.class||'')}" placeholder="e.g. P1">`
+        }</div>
        <div class="field"><label>${escapeHtml(t('roster_name_label'))}</label>
         <input type="text" id="re-name" value="${escapeHtml(u.name||'')}" placeholder="Full name"></div>
        <div class="field"><label>${escapeHtml(t('roster_parent1_label'))}</label>
