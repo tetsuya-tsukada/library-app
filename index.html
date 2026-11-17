@@ -1794,8 +1794,11 @@ function renderScanMoreOrReview_(){
   document.getElementById('cancelQueueBtn').onclick = () => { scanQueue = []; renderScanQueue(); area.innerHTML = ''; };
 }
 
+function vibrate_(){ if(navigator.vibrate) navigator.vibrate(80); }
+
 function addToQueue_(itemId, title, action, name, contact){
   scanQueue.push({ itemId, title, action, name, contact });
+  vibrate_();
   renderScanQueue();
   flashScanToast_(t(action === 'borrow' ? 'borrow_scanned_toast' : 'return_scanned_toast', { title }));
 }
@@ -2074,6 +2077,7 @@ async function lookupAndQueueReturn_(itemId){
       return;
     }
     returnQueue.push({ itemId, title: data.title });
+    vibrate_();
     renderReturnQueue();
     flashReturnToast_(t('return_scanned_toast', { title: data.title }));
   }catch(e){
