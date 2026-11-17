@@ -704,7 +704,9 @@ const I18N = {
     roster_name_label: 'Name',
     roster_parent1_label: 'Parent / Guardian 1',
     roster_parent2_label: 'Parent / Guardian 2',
-    roster_email_label: 'Email'
+    roster_email_label: 'Email',
+    roster_subclass_label: 'Sub Class',
+    roster_title_label: 'Title'
   },
   ja: {
     brand_tagline: '地域図書館',
@@ -922,7 +924,9 @@ const I18N = {
     roster_name_label: '氏名',
     roster_parent1_label: '保護者1',
     roster_parent2_label: '保護者2',
-    roster_email_label: 'メール'
+    roster_email_label: 'メール',
+    roster_subclass_label: 'サブクラス',
+    roster_title_label: '役職'
   }
 };
 
@@ -2843,7 +2847,7 @@ function renderRosterList_() {
       const parents = [u.parent1, u.parent2].filter(Boolean).join(' / ');
       return `<div class="book-row">
         <div class="meta">
-          <div class="title">${escapeHtml(u.name)}${u.class ? ' <span style="font-weight:normal;font-size:0.85em;color:#999;">· ' + escapeHtml(u.class) + '</span>' : ''}</div>
+          <div class="title">${escapeHtml(u.name)}${u.class ? ' <span style="font-weight:normal;font-size:0.85em;color:#999;">· ' + escapeHtml(u.class) + (u.subClass ? '-'+escapeHtml(u.subClass) : '') + '</span>' : ''}${u.title && u.title !== 'Student' ? ' <span style="font-size:0.8em;color:#1a7a3c;font-weight:600;">['+escapeHtml(u.title)+']</span>' : ''}</div>
           ${parents ? '<div class="sub">' + escapeHtml(parents) + '</div>' : ''}
         </div>
         <button class="btn btn-ghost btn-sm" onclick="rosterStartEdit_(${u.rowIndex})">${escapeHtml(t('roster_edit_btn'))}</button>
@@ -2868,6 +2872,10 @@ function rosterFormHtml_(u) {
           ? `<select id="re-class"><option value=""></option>${(CONFIG.classGroups||[]).map(g=>`<option value="${escapeHtml(g)}"${g===u.class?' selected':''}>${escapeHtml(g)}</option>`).join('')}</select>`
           : `<input type="text" id="re-class" value="${escapeHtml(u.class||'')}" placeholder="e.g. P1">`
         }</div>
+       <div class="field"><label>${escapeHtml(t('roster_subclass_label'))}</label>
+        <input type="text" id="re-subclass" value="${escapeHtml(u.subClass||'')}" placeholder="e.g. A (optional)"></div>
+       <div class="field"><label>${escapeHtml(t('roster_title_label'))}</label>
+        <select id="re-title"><option value="Student"${(u.title||'Student')==='Student'?' selected':''}>Student</option><option value="Teacher"${u.title==='Teacher'?' selected':''}>Teacher</option></select></div>
        <div class="field"><label>${escapeHtml(t('roster_name_label'))}</label>
         <input type="text" id="re-name" value="${escapeHtml(u.name||'')}" placeholder="Full name"></div>
        <div class="field"><label>${escapeHtml(t('roster_parent1_label'))}</label>
@@ -2918,7 +2926,7 @@ function rosterShowAdd_() {
   const f = document.getElementById('rosterAddForm');
   f.style.display = '';
   const empty = rosterTab_ === 'users'
-    ? { rowIndex: 0, class: '', name: '', parent1: '', parent2: '' }
+    ? { rowIndex: 0, class: '', subClass: '', title: 'Student', name: '', parent1: '', parent2: '' }
     : { rowIndex: 0, email: '', name: '' };
   f.innerHTML = rosterFormHtml_(empty);
   f.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -2946,6 +2954,8 @@ async function rosterSave_(rowIndex) {
     action = 'saveUser';
     params = { adminEmail: USER.contact, rowIndex: rowIndex || '',
       'class': (document.getElementById('re-class')?.value || '').trim(),
+      subClass: (document.getElementById('re-subclass')?.value || '').trim(),
+      title: (document.getElementById('re-title')?.value || 'Student').trim(),
       name,
       parent1: (document.getElementById('re-parent1')?.value || '').trim(),
       parent2: (document.getElementById('re-parent2')?.value || '').trim() };
