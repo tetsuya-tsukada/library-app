@@ -49,6 +49,13 @@
   }
   .lang-toggle:active{opacity:1;}
 
+  .admin-menu-btn{
+    background:none;border:1px solid var(--line);border-radius:4px;
+    padding:4px 9px;color:var(--paper);opacity:0.7;
+    font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.5px;
+    cursor:pointer;white-space:nowrap;
+  }
+  .admin-menu-btn:active{opacity:1;}
   .admin-menu{position:relative;}
   .admin-dropdown{
     position:absolute;right:0;top:calc(100% + 6px);
@@ -233,7 +240,7 @@
     <div style="display:flex;align-items:center;gap:10px;">
       <button type="button" class="lang-toggle" id="langToggle" onclick="toggleLanguage()">日本語</button>
       <div class="admin-menu" id="adminMenu" style="display:none;">
-        <button type="button" class="lang-toggle" id="adminMenuBtn" onclick="toggleAdminMenu_()">Admin</button>
+        <button type="button" class="admin-menu-btn" id="adminMenuBtn" onclick="toggleAdminMenu_()">Admin</button>
         <div class="admin-dropdown" id="adminDropdown" style="display:none;">
           <button type="button" data-i18n="nav_report" onclick="showScreen('report');toggleAdminMenu_(false)">Report</button>
           <button type="button" data-i18n="nav_roster" onclick="showScreen('roster');toggleAdminMenu_(false)">Roster</button>
