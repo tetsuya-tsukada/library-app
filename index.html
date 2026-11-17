@@ -296,11 +296,11 @@
         </div>
         <div id="scanPatronResults"></div>
       </div>
-      <button class="btn btn-primary" id="scanBtn" onclick="toggleScanner()">Start scanning</button>
       <div id="readerWrap" style="display:none;">
         <div id="reader"></div>
         <div class="scan-toast" id="scanToast"></div>
       </div>
+      <button class="btn btn-primary" id="scanBtn" onclick="toggleScanner()">Start scanning</button>
       <!-- Where the family "who's borrowing this round?" picker (and the
            post-scan confirmation/results) render. -->
       <div id="resultArea"></div>
@@ -318,11 +318,11 @@
     <section class="screen" id="screen-return">
       <h3 class="section-title" data-i18n="return_title">Scan books back in</h3>
       <p class="section-sub" data-i18n="return_sub">Scan a book's QR code to return it — no need to pick a patron first.</p>
-      <button class="btn btn-primary" id="returnScanBtn" onclick="toggleReturnScanner()">Scan for return</button>
       <div id="returnReaderWrap" style="display:none;">
         <div id="returnReader"></div>
         <div class="scan-toast" id="returnScanToast"></div>
       </div>
+      <button class="btn btn-primary" id="returnScanBtn" onclick="toggleReturnScanner()">Scan for return</button>
       <div id="returnResultArea"></div>
       <p class="section-sub" id="returnScanNote" style="text-align:center;color:var(--gold);"></p>
       <div id="returnQueueList"></div>
