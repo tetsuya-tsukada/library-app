@@ -55,7 +55,7 @@
     font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.5px;
     cursor:pointer;white-space:nowrap;
   }
-  .admin-menu-btn:active{opacity:1;}
+  .admin-menu-btn:active,.admin-menu-btn.active{opacity:1;border-color:var(--gold);color:var(--gold);}
   .admin-menu{position:relative;}
   .admin-dropdown{
     position:absolute;right:0;top:calc(100% + 6px);
@@ -242,6 +242,7 @@
       <div class="admin-menu" id="adminMenu" style="display:none;">
         <button type="button" class="admin-menu-btn" id="adminMenuBtn" onclick="toggleAdminMenu_()">Admin</button>
         <div class="admin-dropdown" id="adminDropdown" style="display:none;">
+          <button type="button" data-i18n="nav_shelf" onclick="showScreen('shelf');toggleAdminMenu_(false)">Shelf</button>
           <button type="button" data-i18n="nav_report" onclick="showScreen('report');toggleAdminMenu_(false)">Report</button>
           <button type="button" data-i18n="nav_roster" onclick="showScreen('roster');toggleAdminMenu_(false)">Roster</button>
         </div>
@@ -253,7 +254,6 @@
   <nav class="topnav">
     <button id="nav-scan" data-i18n="nav_borrow" onclick="showScreen('scan')">Borrow</button>
     <button id="nav-return" style="display:none;" data-i18n="nav_return" onclick="showScreen('return')">Return</button>
-    <button id="nav-shelf" style="display:none;" data-i18n="nav_shelf" onclick="showScreen('shelf')">Shelf</button>
     <button id="nav-summary" style="display:none;" data-i18n="nav_summary" onclick="showScreen('summary')">Summary</button>
   </nav>
 
@@ -1054,6 +1054,10 @@ async function apiFetch_(action, params){
 let html5QrCode = null;
 let scanning = false;
 let bookCache = [];
+let shelfLoaded_ = false;
+let summaryLoaded_ = false;
+let reportLoaded_ = false;
+let rosterLoaded_ = false;
 let scanQueue = []; // { itemId, title, action, name, contact }
 let pendingScans = []; // itemIds waiting to be looked up (fed from onScanSuccess faster than we can process)
 let processingItemId = null; // itemId currently mid-lookup, so repeat frames of it are ignored
@@ -1172,17 +1176,19 @@ function showScreen(name){
   if(el) el.classList.add('active');
   const nav = document.getElementById('nav-'+name);
   if(nav) nav.classList.add('active');
+  const adminMenuBtn = document.getElementById('adminMenuBtn');
+  if(adminMenuBtn) adminMenuBtn.classList.toggle('active', name==='shelf'||name==='report'||name==='roster');
   if(name==='shelf'){
     // Collapsed by default on every fresh visit via the nav — but not on
     // the internal loadShelf() calls from the Refresh button or right
     // after adding a book, which would otherwise snap shut the label
     // that addBook() just rendered inside this same form.
     setAddBookFormOpen_(false);
-    loadShelf();
+    if(!shelfLoaded_) loadShelf();
   }
-  if(name==='summary') loadSummary();
-  if(name==='report') loadReport_();
-  if(name==='roster') loadRoster_();
+  if(name==='summary' && !summaryLoaded_) loadSummary();
+  if(name==='report' && !reportLoaded_) loadReport_();
+  if(name==='roster' && !rosterLoaded_) loadRoster_();
   if(name==='scan'){
     // Clears a stale "Done" confirmation card left over from the last
     // completed batch when switching back to this tab from elsewhere —
@@ -1305,8 +1311,6 @@ async function adminLogin(){
 }
 
 function applyAdminUI(isAdmin){
-  const shelfNav = document.getElementById('nav-shelf');
-  if(shelfNav) shelfNav.style.display = isAdmin ? '' : 'none';
   const returnNav = document.getElementById('nav-return');
   if(returnNav) returnNav.style.display = isAdmin ? '' : 'none';
   const summaryNav = document.getElementById('nav-summary');
@@ -1369,6 +1373,11 @@ function logout(){
   ACTING_AS = null;
   familyRoundMember_ = null;
   familyPickerOpen_ = false;
+  bookCache = [];
+  shelfLoaded_ = false;
+  summaryLoaded_ = false;
+  reportLoaded_ = false;
+  rosterLoaded_ = false;
   localStorage.removeItem('stacks_user');
   updateWhoBadge();
   applyAdminUI(false);
@@ -2178,6 +2187,7 @@ async function loadShelf(){
   try{
     const data = await apiFetch_('list');
     bookCache = data.books || [];
+    shelfLoaded_ = true;
     const borrowed = bookCache.filter(b=>b.Status==='Borrowed').length;
     countEl.textContent = t('shelf_count', { n: bookCache.length, m: borrowed });
     shelfListLimit_ = SHELF_PAGE_SIZE; // start back at page 1 on every fresh load
@@ -2254,6 +2264,7 @@ async function loadSummary(){
     const data = await apiFetch_('getSummary', { adminEmail: USER.contact || '' });
     if(data.error){ tilesEl.innerHTML = '<p class="section-sub">'+escapeHtml(data.error)+'</p>'; return; }
     summaryCache = data;
+    summaryLoaded_ = true;
     renderSummaryTiles();
   }catch(e){
     tilesEl.innerHTML = '<p class="section-sub">'+escapeHtml(t('summary_could_not_load'))+'</p>';
@@ -2311,6 +2322,7 @@ async function loadReport_(){
     const data = await apiFetch_('getHistory', { adminEmail: USER.contact || '' });
     if(data.error){ document.getElementById('reportResultsArea').innerHTML = '<p class="section-sub">'+escapeHtml(data.error)+'</p>'; return; }
     reportAllData_ = data.history || [];
+    reportLoaded_ = true;
     applyReportFilters_();
   }catch(e){
     document.getElementById('reportResultsArea').innerHTML = '<p class="section-sub">'+escapeHtml(t('report_could_not_load'))+'</p>';
@@ -2788,6 +2800,7 @@ let rosterTab_ = 'users'; // 'users' or 'admins'
 let rosterEditRow_ = null;
 
 function loadRoster_() {
+  rosterLoaded_ = true;
   rosterTab_ = 'users';
   showRosterTab_('users');
 }
