@@ -990,20 +990,27 @@ function clearSiteAccess_(){
   localStorage.removeItem(SITE_ACCESS_KEY);
 }
 
-// Every ordinary API call funnels through here. Uses POST so credentials
-// (siteCode, adminEmail, secret) are sent in the request body instead of
-// the URL — keeping them out of browser history and Apps Script logs.
-// action=verifySiteCode is handled separately by verifySiteCodePost_ below
-// since it runs before SITE_ACCESS is established.
-async function apiFetch_(action, params){
-  const body = new URLSearchParams({ action });
-  if(SITE_ACCESS && SITE_ACCESS.code) body.append('siteCode', SITE_ACCESS.code);
+// Builds a GET URL for a backend action. Every call includes the unlocked
+// device's siteCode so it's never accidentally omitted — except
+// verifySiteCode itself, which is how a device gets a code in the first place.
+// NOTE: Google Apps Script /exec endpoints only accept cross-origin GET
+// requests from browsers (POST returns 503 with no CORS header). Credentials
+// therefore travel as URL params, which is a known GAS limitation.
+function apiUrl_(action, params){
+  let url = CONFIG.apiUrl + '?action=' + encodeURIComponent(action);
+  if(SITE_ACCESS && SITE_ACCESS.code) url += '&siteCode=' + encodeURIComponent(SITE_ACCESS.code);
   if(params){
     Object.keys(params).forEach(k => {
-      if(params[k] !== undefined && params[k] !== null) body.append(k, String(params[k]));
+      if(params[k] !== undefined && params[k] !== null) url += '&' + k + '=' + encodeURIComponent(params[k]);
     });
   }
-  const res = await fetch(CONFIG.apiUrl, { method:'POST', body });
+  return url;
+}
+
+// Every ordinary API call funnels through here so a code invalidated
+// server-side mid-session kicks this device back to the gate right away.
+async function apiFetch_(action, params){
+  const res = await fetch(apiUrl_(action, params));
   const data = await res.json();
   if(data && data.siteAccessInvalid){
     clearSiteAccess_();
@@ -1011,14 +1018,6 @@ async function apiFetch_(action, params){
     return new Promise(()=>{}); // page is reloading — never resolve so the caller can't act on this stale response
   }
   return data;
-}
-
-// verifySiteCode calls happen before SITE_ACCESS exists (can't use
-// apiFetch_), but still use POST to keep the code out of the URL.
-async function verifySiteCodePost_(code){
-  const body = new URLSearchParams({ action:'verifySiteCode', code });
-  const res = await fetch(CONFIG.apiUrl, { method:'POST', body });
-  return res.json();
 }
 let html5QrCode = null;
 let scanning = false;
@@ -1102,7 +1101,8 @@ async function onGateScanSuccess(decodedText){
   gateScanning = false;
   statusEl.textContent = t('gate_checking');
   try{
-    const data = await verifySiteCodePost_(code);
+    const res = await fetch(apiUrl_('verifySiteCode', { code }));
+    const data = await res.json();
     if(data.error || !data.ok){
       statusEl.textContent = data.error || t('gate_invalid');
       return;
@@ -2701,7 +2701,8 @@ async function bootstrapSiteAccess_(){
   if(urlCode){
     window.history.replaceState({}, '', window.location.origin + window.location.pathname);
     try{
-      const data = await verifySiteCodePost_(urlCode);
+      const res = await fetch(apiUrl_('verifySiteCode', { code: urlCode }));
+      const data = await res.json();
       if(data.ok) saveSiteAccess_(urlCode, data.ttlHours || 24);
     }catch(e){ /* fall through to the normal gate check below */ }
   }
@@ -2713,7 +2714,8 @@ async function bootstrapSiteAccess_(){
     // unlocked gets sent back to the gate on its very next load instead
     // of quietly working until its TTL happens to run out.
     try{
-      const data = await verifySiteCodePost_(SITE_ACCESS.code);
+      const res = await fetch(apiUrl_('verifySiteCode', { code: SITE_ACCESS.code }));
+      const data = await res.json();
       if(!data.ok) clearSiteAccess_();
     }catch(e){ /* network hiccup during the check itself — keep the
                   cached access rather than lock the device out; a

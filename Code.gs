@@ -846,9 +846,9 @@ function respond_(params) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-// Both GET and POST are accepted so old unlocked devices (cached siteCode)
-// keep working while the frontend transitions to POST-only. New requests
-// from the app always use POST — credentials never appear in the URL.
+// doGet handles all browser requests — Apps Script /exec returns 503 for
+// cross-origin POST, so GET is the only option from a browser client.
+// doPost is kept for any future server-to-server callers.
 function doGet(e)  { return respond_(e.parameter); }
 function doPost(e) { return respond_(e.parameter); }
 
