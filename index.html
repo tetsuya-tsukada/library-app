@@ -113,7 +113,7 @@
      its .scan-toast (position:absolute) stays contained within the
      camera box instead of escaping to the nearest positioned ancestor
      up the page. */
-  #readerWrap, #returnReaderWrap{position:relative;margin:16px 0;height:180px;overflow:hidden;border-radius:8px;}
+  #readerWrap, #returnReaderWrap{position:relative;margin:16px 0;height:220px;overflow:hidden;border-radius:8px;}
   #reader,#returnReader{position:relative;top:50%;transform:translateY(-50%);border-radius:8px;overflow:hidden;border:1px solid var(--line);}
   #reader video,#returnReader video{border-radius:8px;}
 
@@ -1105,7 +1105,7 @@ async function toggleGateScanner(){
   gateHtml5QrCode = new Html5Qrcode('gateReader');
   gateHtml5QrCode.start(
     { facingMode: 'environment' },
-    { fps: 10, qrbox: 110 },
+    { fps: 10, qrbox: 160 },
     onGateScanSuccess,
     ()=>{}
   ).catch(err=>{
@@ -1506,7 +1506,7 @@ async function beginScanningSession_(){
   html5QrCode = new Html5Qrcode('reader');
   html5QrCode.start(
     { facingMode: 'environment' },
-    { fps:10, qrbox:110 },
+    { fps:10, qrbox:160 },
     onScanSuccess,
     ()=>{}
   ).catch(err=>{
@@ -1997,7 +1997,7 @@ async function beginReturnScanningSession_(){
   html5QrCodeReturn = new Html5Qrcode('returnReader');
   html5QrCodeReturn.start(
     { facingMode: 'environment' },
-    { fps: 10, qrbox: 110 },
+    { fps: 10, qrbox: 160 },
     onReturnScanSuccess,
     ()=>{}
   ).catch(err=>{
