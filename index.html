@@ -579,6 +579,10 @@ const I18N = {
     scan_network_fail_item: 'Could not reach the sheet for {itemId}.',
     who_borrowing_round: "Who's borrowing this round?",
     family_name_family: "{name}'s family",
+    teacher_borrow_class_btn: 'Borrow for Class',
+    teacher_class_heading: 'Class {cls}',
+    scan_scanning_for_class: 'Scanning for class <strong>{cls}</strong>',
+    teacher_class_no_students: 'No students found in this class.',
     limit_reached_sub: ' · limit reached',
     select_btn: 'Select',
     limit_reached_option_btn: 'Limit reached',
@@ -799,6 +803,10 @@ const I18N = {
     scan_network_fail_item: '{itemId} の情報をシートから取得できませんでした。',
     who_borrowing_round: '今回は誰が借りますか？',
     family_name_family: '{name}の家族',
+    teacher_borrow_class_btn: 'クラス貸出',
+    teacher_class_heading: '{cls}クラス',
+    scan_scanning_for_class: 'クラス<strong>{cls}</strong>としてスキャン中',
+    teacher_class_no_students: 'このクラスに生徒が見つかりません。',
     limit_reached_sub: ' ・上限に達しています',
     select_btn: '選択',
     limit_reached_option_btn: '上限に達しています',
@@ -1405,7 +1413,13 @@ function currentFamily_(){
 function updateScanIdentityBanner(){
   const el = document.getElementById('scanIdentityBanner');
   if(el){
-    if(ACTING_AS && ACTING_AS.children){
+    if(ACTING_AS && ACTING_AS.type === 'teacherClass'){
+      const cls = (ACTING_AS.children[0]?.class||'')+(ACTING_AS.children[0]?.subClass?'-'+ACTING_AS.children[0].subClass:'');
+      const roundNote = familyRoundMember_
+        ? t('scan_this_round', { name: escapeHtml(familyRoundMember_.name) })
+        : t('scan_pick_before_start');
+      el.innerHTML = t('scan_scanning_for_class', { cls: escapeHtml(cls) })+roundNote+' · <a class="linklike" style="cursor:pointer;" onclick="clearActingAs()">'+escapeHtml(t('scan_stop_link'))+'</a>';
+    } else if(ACTING_AS && ACTING_AS.children){
       const roundNote = familyRoundMember_
         ? t('scan_this_round', { name: escapeHtml(familyRoundMember_.name) })
         : t('scan_pick_before_start');
@@ -1583,7 +1597,7 @@ function promptFamilyRoundMember_(family){
     // option here (see searchUsers in Code.gs) — not just whichever
     // parent name was originally searched/clicked, so both parents of a
     // two-parent child are selectable.
-    const guardians = (family.guardians && family.guardians.length) ? family.guardians : [family.name];
+    const guardians = (family.type === 'teacherClass') ? [] : ((family.guardians && family.guardians.length) ? family.guardians : [family.name]);
     const options = family.children.map(c => ({ name: c.name, label: c.name + (c.class ? ' ('+c.class+')' : ''), contact: contactOf_(c) }))
       .concat(guardians.map(g => ({ name: g + ' (Parent)', label: g + ' (Parent)', contact: g, isSelf: true })));
     let serverCounts = {};
@@ -1597,9 +1611,12 @@ function promptFamilyRoundMember_(family){
     // Same book-row list style as the "Find patron" picker, rather than a
     // standalone stamp-card of stacked buttons — one consistent look for
     // "pick a person" across the app.
+    const classSubHeading = (family.type === 'teacherClass')
+      ? t('teacher_class_heading', { cls: (family.children[0]?.class||'')+(family.children[0]?.subClass?'-'+family.children[0].subClass:'') })
+      : t('family_name_family', { name: family.name });
     area.innerHTML = `
       <h3 class="section-title">${escapeHtml(t('who_borrowing_round'))}</h3>
-      <p class="section-sub">${escapeHtml(t('family_name_family', { name: family.name }))}</p>
+      <p class="section-sub">${escapeHtml(classSubHeading)}</p>
       <div id="familyRoundButtons"></div>
       <button class="btn btn-outline" style="margin-top:14px;" id="cancelFamilyRoundBtn">${escapeHtml(t('cancel_btn'))}</button>`;
     const holder = document.getElementById('familyRoundButtons');
@@ -2460,6 +2477,28 @@ async function actAsFamily_(candidate){
   }
 }
 
+// Teacher class borrow mode: fetches all students in the teacher's
+// class+subClass and sets up family-style batched scanning for them —
+// admin picks one student per round, scans a book, picks another, etc.,
+// then one confirm commits the whole batch.
+async function actAsTeacherClass_(candidate){
+  try{
+    const data = await apiFetch_('getClassStudents', { classVal: candidate.class || '', subClass: candidate.subClass || '' });
+    const students = (data.students || []).map(s => ({ name: s.name, class: s.class, subClass: s.subClass || '', contact: s.parent1 || s.name }));
+    if(!students.length){ flashScanNote_(t('teacher_class_no_students')); return; }
+    ACTING_AS = { name: candidate.name, contact: contactOf_(candidate), children: students, guardians: [], type: 'teacherClass' };
+    familyRoundMember_ = null;
+    resetScanResult_();
+    showScreen('scan');
+    await ensureFamilyRoundMemberPicked_();
+    if(ACTING_AS && ACTING_AS.children && familyRoundMember_){
+      await beginScanningSession_();
+    }
+  }catch(e){
+    flashScanNote_(t('teacher_class_no_students'));
+  }
+}
+
 // Used by the Scan screen's embedded "Find patron" picker: shows both
 // individual rows and "parent of ..." groups, same as sign-in search
 // does. An individual is a single flat identity to scan as immediately;
@@ -2479,9 +2518,13 @@ function renderPatronCandidates_(candidates, listEl, searchInputId){
     <div class="book-row">
       <div class="meta">
         <div class="title">${escapeHtml(c.name)}</div>
-        <div class="sub">${escapeHtml(c.class)}${c.parent1?' · '+escapeHtml(t('patron_parent1', { name: c.parent1 })):''}${c.parent2?' · '+escapeHtml(t('patron_parent2', { name: c.parent2 })):''}</div>
+        <div class="sub">${escapeHtml(c.class)}${c.subClass?'-'+escapeHtml(c.subClass):''}${c.parent1?' · '+escapeHtml(t('patron_parent1', { name: c.parent1 })):''}${c.parent2?' · '+escapeHtml(t('patron_parent2', { name: c.parent2 })):''}</div>
       </div>
-      <button class="btn btn-primary btn-sm" data-idx="${i}">${escapeHtml(t('patron_use_for_scan'))}</button>
+      ${c.title === 'Teacher' && c.class ? `
+      <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end;">
+        <button class="btn btn-primary btn-sm" data-idx="${i}">${escapeHtml(t('patron_use_for_scan'))}</button>
+        <button class="btn btn-outline btn-sm" data-tcls-idx="${i}">${escapeHtml(t('teacher_borrow_class_btn'))}</button>
+      </div>` : `<button class="btn btn-primary btn-sm" data-idx="${i}">${escapeHtml(t('patron_use_for_scan'))}</button>`}
     </div>` : `
     <div class="book-row">
       <div class="meta">
@@ -2497,6 +2540,10 @@ function renderPatronCandidates_(candidates, listEl, searchInputId){
       else actAsFamily_(c);
       finish_();
     };
+  });
+  listEl.querySelectorAll('button[data-tcls-idx]').forEach(btn=>{
+    const c = candidates[Number(btn.dataset.tclsIdx)];
+    btn.onclick = () => { actAsTeacherClass_(c); finish_(); };
   });
 }
 
