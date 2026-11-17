@@ -113,9 +113,9 @@
      its .scan-toast (position:absolute) stays contained within the
      camera box instead of escaping to the nearest positioned ancestor
      up the page. */
-  #readerWrap, #returnReaderWrap{position:relative;margin:16px auto;max-width:50%;}
-  #reader{border-radius:8px;overflow:hidden;border:1px solid var(--line);}
-  #reader video{border-radius:8px;}
+  #readerWrap, #returnReaderWrap{position:relative;margin:16px 0;}
+  #reader,#returnReader{border-radius:8px;overflow:hidden;border:1px solid var(--line);max-height:150px;}
+  #reader video,#returnReader video{border-radius:8px;}
 
   .scan-toast{
     position:absolute;left:50%;top:14px;transform:translateX(-50%) translateY(-8px);
