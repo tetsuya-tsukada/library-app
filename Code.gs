@@ -1273,7 +1273,7 @@ function rowKey_(r) {
  */
 function searchUsers(query) {
   const target = String(query || '').trim().toLowerCase();
-  const minLen = /[^\x00-\x7F]/.test(target) ? 1 : 4;
+  const minLen = /[^\x00-\x7F]/.test(target) ? 1 : 3;
   if (target.length < minLen) return { candidates: [] };
   const { data } = getUsersSheet_();
   const rows = [];
