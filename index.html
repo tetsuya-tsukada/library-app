@@ -245,6 +245,7 @@
           <button type="button" data-i18n="nav_shelf" onclick="showScreen('shelf');toggleAdminMenu_(false)">Shelf</button>
           <button type="button" data-i18n="nav_report" onclick="showScreen('report');toggleAdminMenu_(false)">Report</button>
           <button type="button" data-i18n="nav_roster" onclick="showScreen('roster');toggleAdminMenu_(false)">Roster</button>
+          <button type="button" data-i18n="nav_settings" onclick="showScreen('settings');toggleAdminMenu_(false)">Settings</button>
         </div>
       </div>
       <div class="who" id="whoBadge" onclick="handleWhoBadgeClick()">Log in</div>
@@ -468,6 +469,21 @@
       </div>
       <div id="rosterAddForm" style="display:none;"></div>
       <div id="rosterList"></div>
+    </section>
+
+    <!-- SETTINGS (admin only) -->
+    <section class="screen" id="screen-settings">
+      <h3 class="section-title" data-i18n="settings_title">Settings</h3>
+      <div class="field">
+        <label data-i18n="settings_loan_days_kids">Loan Period — Kids (days)</label>
+        <input type="number" id="settingsLoanDays" min="1" max="365">
+      </div>
+      <div class="field">
+        <label data-i18n="settings_loan_days_adult">Loan Period — Adult (days)</label>
+        <input type="number" id="settingsLoanDaysAdult" min="1" max="365">
+      </div>
+      <button class="btn btn-primary" onclick="saveSettings_()" data-i18n="settings_save_btn">Save</button>
+      <p id="settingsMsg" style="margin-top:10px;font-size:13px;"></p>
     </section>
 
   </main>
@@ -710,7 +726,16 @@ const I18N = {
     roster_parent2_label: 'Parent / Guardian 2',
     roster_email_label: 'Email',
     roster_subclass_label: 'Sub Class',
-    roster_title_label: 'Title'
+    roster_title_label: 'Title',
+
+    nav_settings: 'Settings',
+    settings_title: 'Settings',
+    settings_loan_days_kids: 'Loan Period — Kids (days)',
+    settings_loan_days_adult: 'Loan Period — Adult (days)',
+    settings_save_btn: 'Save',
+    settings_saving: 'Saving…',
+    settings_saved: 'Saved.',
+    settings_error: 'Could not save — check your connection.'
   },
   ja: {
     brand_tagline: '地域図書館',
@@ -934,7 +959,16 @@ const I18N = {
     roster_parent2_label: '保護者2',
     roster_email_label: 'メール',
     roster_subclass_label: 'サブクラス',
-    roster_title_label: '役職'
+    roster_title_label: '役職',
+
+    nav_settings: '設定',
+    settings_title: '設定',
+    settings_loan_days_kids: '貸出期間 — 子ども（日数）',
+    settings_loan_days_adult: '貸出期間 — 大人（日数）',
+    settings_save_btn: '保存',
+    settings_saving: '保存中…',
+    settings_saved: '保存しました。',
+    settings_error: '保存できませんでした。接続を確認してください。'
   }
 };
 
@@ -1169,7 +1203,7 @@ async function onGateScanSuccess(decodedText){
 }
 
 function showScreen(name){
-  if((name==='shelf' || name==='return' || name==='summary' || name==='report' || name==='roster') && !(USER && USER.isAdmin)) name = 'scan';
+  if((name==='shelf' || name==='return' || name==='summary' || name==='report' || name==='roster' || name==='settings') && !(USER && USER.isAdmin)) name = 'scan';
   if(name==='scan' && !USER) name = 'admin-login';
   // Leaving the Borrow screen for another tab while an admin had a
   // patron (or family) picked to scan for — clear that pick so coming
@@ -1192,7 +1226,7 @@ function showScreen(name){
   const nav = document.getElementById('nav-'+name);
   if(nav) nav.classList.add('active');
   const adminMenuBtn = document.getElementById('adminMenuBtn');
-  if(adminMenuBtn) adminMenuBtn.classList.toggle('active', name==='shelf'||name==='report'||name==='roster');
+  if(adminMenuBtn) adminMenuBtn.classList.toggle('active', name==='shelf'||name==='report'||name==='roster'||name==='settings');
   if(name==='shelf'){
     // Collapsed by default on every fresh visit via the nav — but not on
     // the internal loadShelf() calls from the Refresh button or right
@@ -1204,6 +1238,7 @@ function showScreen(name){
   if(name==='summary') loadSummary();
   if(name==='report' && !reportLoaded_) loadReport_();
   if(name==='roster' && !rosterLoaded_) loadRoster_();
+  if(name==='settings') loadSettingsForm_();
   if(name==='scan'){
     // Clears a stale "Done" confirmation card left over from the last
     // completed batch when switching back to this tab from elsewhere —
@@ -1354,6 +1389,7 @@ async function loadRemoteConfig(){
     const cached = JSON.parse(localStorage.getItem(RCACHE_KEY) || 'null');
     if (cached && cached.ts && (Date.now() - cached.ts) < RCACHE_TTL) {
       CONFIG.loanDays = cached.loanDays;
+      CONFIG.loanDaysAdult = cached.loanDaysAdult || cached.loanDays;
       CONFIG.maxBorrowItems = cached.maxBorrowItems;
       CONFIG.bookGroups = cached.bookGroups;
       CONFIG.classGroups = cached.classGroups || [];
@@ -1364,10 +1400,11 @@ async function loadRemoteConfig(){
   try{
     const data = await apiFetch_('getConfig');
     CONFIG.loanDays = parseInt(data.LoanDays, 10) || 14;
+    CONFIG.loanDaysAdult = parseInt(data.LoanDaysAdult, 10) || CONFIG.loanDays;
     CONFIG.maxBorrowItems = parseInt(data.MaxBorrowItems, 10) || 4;
     CONFIG.bookGroups = String(data.BookGroups || '').split(',').map(g => g.trim()).filter(Boolean);
     CONFIG.classGroups = String(data.ClassGroups || '').split(',').map(g => g.trim()).filter(Boolean);
-    try { localStorage.setItem(RCACHE_KEY, JSON.stringify({ ts: Date.now(), loanDays: CONFIG.loanDays, maxBorrowItems: CONFIG.maxBorrowItems, bookGroups: CONFIG.bookGroups, classGroups: CONFIG.classGroups })); } catch(e) {}
+    try { localStorage.setItem(RCACHE_KEY, JSON.stringify({ ts: Date.now(), loanDays: CONFIG.loanDays, loanDaysAdult: CONFIG.loanDaysAdult, maxBorrowItems: CONFIG.maxBorrowItems, bookGroups: CONFIG.bookGroups, classGroups: CONFIG.classGroups })); } catch(e) {}
   }catch(e){
     console.warn('Could not load config from the sheet', e);
   }
@@ -3046,6 +3083,32 @@ async function rosterDelete_(rowIndex, email) {
     rosterHideDelete_();
     const errEl = document.getElementById('rosterErrMsg');
     if (errEl) { errEl.textContent = e.message; errEl.style.display = ''; }
+  }
+}
+
+// ---- SETTINGS SCREEN (admin) ----
+
+function loadSettingsForm_() {
+  document.getElementById('settingsLoanDays').value = CONFIG.loanDays || 14;
+  document.getElementById('settingsLoanDaysAdult').value = CONFIG.loanDaysAdult || CONFIG.loanDays || 14;
+  document.getElementById('settingsMsg').textContent = '';
+}
+
+async function saveSettings_() {
+  const msg = document.getElementById('settingsMsg');
+  const days = parseInt(document.getElementById('settingsLoanDays').value, 10);
+  const daysAdult = parseInt(document.getElementById('settingsLoanDaysAdult').value, 10);
+  if (!days || days < 1 || !daysAdult || daysAdult < 1) { msg.textContent = t('settings_error'); return; }
+  msg.textContent = t('settings_saving');
+  try {
+    const result = await apiFetch_('saveConfig', { adminEmail: USER.contact, LoanDays: days, LoanDaysAdult: daysAdult });
+    if (result.error) throw new Error(result.error);
+    CONFIG.loanDays = days;
+    CONFIG.loanDaysAdult = daysAdult;
+    try { localStorage.removeItem('stacks_remote_cfg'); } catch(e) {}
+    msg.textContent = t('settings_saved');
+  } catch(e) {
+    msg.textContent = e.message || t('settings_error');
   }
 }
 </script>

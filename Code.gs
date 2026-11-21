@@ -548,6 +548,27 @@ function getPublicConfig() {
   return { LoanDays: cfg.LoanDays, LoanDaysAdult: cfg.LoanDaysAdult, MaxBorrowItems: cfg.MaxBorrowItems, BookGroups: cfg.BookGroups || '' };
 }
 
+function saveConfig(adminEmail, params) {
+  if (!adminEmail || !isAdmin_(adminEmail)) return { error: 'Not authorized' };
+  const sh = getSS().getSheetByName(CONFIG_SHEET);
+  if (!sh) return { error: 'Config tab not found — run setupConfigSheet first' };
+  const editable = { LoanDays: 'LoanDays', LoanDaysAdult: 'LoanDaysAdult' };
+  const data = sh.getDataRange().getValues();
+  Object.keys(editable).forEach(key => {
+    if (params[key] === undefined) return;
+    const val = parseInt(params[key], 10);
+    if (isNaN(val) || val < 1) return;
+    for (let i = 1; i < data.length; i++) {
+      if (String(data[i][0]).trim() === key) {
+        sh.getRange(i + 1, 2).setValue(String(val));
+        return;
+      }
+    }
+  });
+  _configCache = null; // bust cache so next read picks up new values
+  return { ok: true };
+}
+
 let _configCache = null;
 function getConfig() {
   if (_configCache) return _configCache;
@@ -868,6 +889,7 @@ function handleRequest_(p) {
     case 'getSummary':  return getSummary(p.adminEmail);
     case 'getHistory':  return getHistory(p.adminEmail, p.filter, p.name);
     case 'getConfig':   return getPublicConfig();
+    case 'saveConfig':  return saveConfig(p.adminEmail, p);
     case 'searchUsers': return searchUsers(p.query);
     case 'getClassStudents': return getClassStudents(p.teacherName);
     case 'listUsers':   return listUsers(p.adminEmail);
