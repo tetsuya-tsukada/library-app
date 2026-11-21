@@ -169,6 +169,9 @@
   /* Shelf */
   .book-row{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--line);}
   .book-row .meta{flex:1;}
+  .book-row .label-pick{width:20px;height:20px;margin:0 12px 0 0;flex:0 0 auto;accent-color:var(--gold);cursor:pointer;}
+  .shelf-print-row{display:flex;gap:8px;align-items:center;margin:4px 0 8px;}
+  .shelf-print-row .btn{margin:0;}
   .book-row .title{font-size:14px;font-weight:600;}
   .book-row .sub{font-family:'JetBrains Mono',monospace;font-size:11px;opacity:0.55;margin-top:2px;}
   .status-pill{font-family:'JetBrains Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;padding:4px 8px;border-radius:20px;}
@@ -400,9 +403,9 @@
         <p class="section-sub" id="ocrStatus" style="margin:0 0 12px;"></p>
         <button class="btn btn-primary" data-i18n="shelf_add_book_btn" onclick="addBook()">Add book</button>
         <!-- Confirmation text after a successful add — no QR label here;
-             printable labels are still generated from the Sheet itself
-             (📚 Library menu → Print QR labels), just not inline in this
-             form anymore. -->
+             labels are printed from the All books list below (tick the
+             new book, then "Print QR labels"), or from the Sheet's
+             📚 Library menu → Print QR labels. -->
         <p class="section-sub" id="addBookStatus" style="text-align:center;margin-top:10px;"></p>
       </div>
       <!-- Hidden while the Add book form above is open (see
@@ -415,6 +418,14 @@
           <label data-i18n="search_label">Search</label>
           <input type="text" id="shelfSearch" placeholder="Search by title, author, or borrower" data-i18n-placeholder="shelf_search_placeholder" oninput="onShelfSearchInput_()">
         </div>
+        <!-- Prints labels for the ticked books, or — with nothing ticked —
+             every book matching the search (the whole shelf when the
+             search is empty). Button text is set by updateShelfPrintBtn_. -->
+        <div class="shelf-print-row">
+          <button class="btn btn-outline" id="shelfPrintBtn" onclick="printShelfLabels_()">Print QR labels</button>
+          <button class="btn btn-ghost" id="shelfClearPickBtn" style="display:none;width:auto;white-space:nowrap;" data-i18n="shelf_clear_selection" onclick="clearShelfLabelPicks_()">Clear selection</button>
+        </div>
+        <p class="section-sub" style="margin:0 0 4px;" data-i18n="shelf_print_hint">Tick books to print just those labels.</p>
         <div id="bookList"></div>
         <!-- Shows the first page of matches only (see renderBookList) —
              hidden once every match is already on screen. -->
@@ -662,6 +673,16 @@ const I18N = {
     shelf_status_on_shelf: 'On shelf',
     shelf_enter_title: 'Enter a title.',
     shelf_add_fail: 'Could not add book — check your connection and try again.',
+    shelf_print_all: 'Print QR labels (all {n})',
+    shelf_print_matching: 'Print QR labels ({n} matching)',
+    shelf_print_selected: 'Print QR labels ({n} selected)',
+    shelf_clear_selection: 'Clear selection',
+    shelf_print_hint: 'Tick books to print just those labels.',
+    shelf_print_none: 'No books to print.',
+    shelf_print_popup_blocked: 'Could not open the print window — allow pop-ups for this site and try again.',
+    labels_print_btn: 'Print',
+    labels_mode_sheet: 'Sheet (regular paper)',
+    labels_mode_tape: 'Label printer — 24mm tape (e.g. Brother P-touch Cube)',
     cover_tap_hint: 'Tap the preview to capture',
     cover_crop_hint: 'Drag a box around the {target} on the photo.',
     cover_crop_too_small: 'Drag a box around the text first.',
@@ -895,6 +916,16 @@ const I18N = {
     shelf_status_on_shelf: '棚にあります',
     shelf_enter_title: 'タイトルを入力してください。',
     shelf_add_fail: '本を追加できませんでした。接続を確認してもう一度お試しください。',
+    shelf_print_all: 'QRラベルを印刷（全{n}冊）',
+    shelf_print_matching: 'QRラベルを印刷（検索結果{n}冊）',
+    shelf_print_selected: 'QRラベルを印刷（選択した{n}冊）',
+    shelf_clear_selection: '選択を解除',
+    shelf_print_hint: 'チェックした本のラベルだけを印刷できます。',
+    shelf_print_none: '印刷する本がありません。',
+    shelf_print_popup_blocked: '印刷画面を開けませんでした。このサイトのポップアップを許可してもう一度お試しください。',
+    labels_print_btn: '印刷',
+    labels_mode_sheet: 'シート（普通紙）',
+    labels_mode_tape: 'ラベルプリンター — 24mmテープ（Brother P-touch Cube など）',
     cover_tap_hint: 'タップで撮影します',
     cover_crop_hint: '写真の中の{target}を枠で囲んでください。',
     cover_crop_too_small: '先にテキストの範囲を枠で囲んでください。',
@@ -2270,6 +2301,12 @@ function showMoreShelfBooks_(){
   renderBookList();
 }
 
+// ItemIDs ticked for label printing. Kept across searches, "Show more"
+// and re-renders so you can search for a few new books one by one and
+// tick each; cleared only by "Clear selection" (or a page reload).
+const shelfLabelPicks_ = new Set();
+let shelfFiltered_ = []; // the current search's matches, for printing with nothing ticked
+
 function renderBookList(){
   const listEl = document.getElementById('bookList');
   const moreBtn = document.getElementById('shelfShowMoreBtn');
@@ -2280,14 +2317,18 @@ function renderBookList(){
       String(b.Author||'').toLowerCase().includes(q) ||
       String(b.BorrowerName||'').toLowerCase().includes(q);
   });
+  shelfFiltered_ = filtered;
   const visible = filtered.slice(0, shelfListLimit_);
   listEl.innerHTML = visible.map(b=>{
     const pillClass = b.Status==='Borrowed' ? 'borrowed' : (b.Status==='Pending' ? 'pending' : 'avail');
     const pillLabel = b.Status==='Borrowed' ? t('shelf_status_out') : (b.Status==='Pending' ? t('shelf_status_awaiting') : t('shelf_status_on_shelf'));
     const groupSub = b.Group ? ' · ' + escapeHtml(b.Group) : '';
     const sub = (b.Status==='Borrowed' || b.Status==='Pending') ? ' · ' + escapeHtml(b.BorrowerName||'') : '';
+    const id = String(b.ItemID||'').trim();
+    const checked = shelfLabelPicks_.has(id) ? ' checked' : '';
     return `
     <div class="book-row">
+      <input type="checkbox" class="label-pick" data-id="${escapeHtml(id).replace(/"/g,'&quot;')}"${checked} onchange="onShelfLabelPick_(this)" aria-label="${escapeHtml(String(b.Title||'')).replace(/"/g,'&quot;')}">
       <div class="meta">
         <div class="title">${escapeHtml(b.Title)}</div>
         <div class="sub">${escapeHtml(b.ItemID)}${groupSub}${sub}</div>
@@ -2296,6 +2337,128 @@ function renderBookList(){
     </div>`;
   }).join('') || '<p style="opacity:0.6;font-size:13px;">'+escapeHtml(t('shelf_no_match'))+'</p>';
   if(moreBtn) moreBtn.style.display = filtered.length > visible.length ? '' : 'none';
+  updateShelfPrintBtn_();
+}
+
+function onShelfLabelPick_(el){
+  const id = el.getAttribute('data-id');
+  if(el.checked) shelfLabelPicks_.add(id); else shelfLabelPicks_.delete(id);
+  updateShelfPrintBtn_();
+}
+
+function clearShelfLabelPicks_(){
+  shelfLabelPicks_.clear();
+  document.querySelectorAll('#bookList .label-pick').forEach(el => { el.checked = false; });
+  updateShelfPrintBtn_();
+}
+
+// Which books "Print QR labels" will print right now: the ticked ones if
+// any, otherwise every match for the current search (all books when the
+// search box is empty). Ticked books are taken from the whole cache, not
+// just the current search, so ticks made under earlier searches count.
+function shelfBooksToPrint_(){
+  if(shelfLabelPicks_.size) return bookCache.filter(b => shelfLabelPicks_.has(String(b.ItemID||'').trim()));
+  return shelfFiltered_;
+}
+
+function updateShelfPrintBtn_(){
+  const btn = document.getElementById('shelfPrintBtn');
+  const clearBtn = document.getElementById('shelfClearPickBtn');
+  if(!btn) return;
+  const searching = !!(document.getElementById('shelfSearch').value || '').trim();
+  const n = shelfBooksToPrint_().length;
+  btn.textContent = shelfLabelPicks_.size ? t('shelf_print_selected', { n })
+    : (searching ? t('shelf_print_matching', { n }) : t('shelf_print_all', { n }));
+  btn.disabled = n === 0;
+  if(clearBtn) clearBtn.style.display = shelfLabelPicks_.size ? '' : 'none';
+}
+
+// Same label layout as the Sheet's 📚 Library → Print QR labels dialog
+// (PRINT_LABELS_HTML in Code.gs): a grid for regular paper, or one label
+// per page for 24mm continuous tape (e.g. Brother P-touch Cube). Keep the
+// two in step if either layout changes. Opened in a new window so the
+// browser's print dialog only sees the labels, not the app around them.
+function printShelfLabels_(){
+  const books = shelfBooksToPrint_();
+  if(!books.length){ alert(t('shelf_print_none')); return; }
+  const items = books.map(b => ({ itemId: String(b.ItemID||'').trim(), title: String(b.Title||'') }));
+  const strings = { print: t('labels_print_btn'), sheet: t('labels_mode_sheet'), tape: t('labels_mode_tape') };
+  // Escape "<" so a title can never close the <script> tag it's embedded in.
+  const json = s => JSON.stringify(s).replace(/</g, '\\u003c');
+  const win = window.open('', '_blank');
+  if(!win){ alert(t('shelf_print_popup_blocked')); return; }
+  win.document.open();
+  win.document.write(`<!DOCTYPE html>
+<html lang="${LANG}"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>QR labels</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
+<style>
+  body{font-family:sans-serif;margin:0;padding:16px;background:#fff;color:#000;}
+  .toolbar{margin-bottom:14px;display:flex;gap:18px;align-items:center;flex-wrap:wrap;font-size:13px;}
+  .toolbar label{display:inline-flex;align-items:center;gap:4px;cursor:pointer;}
+  .toolbar button{font-size:14px;padding:6px 16px;}
+  .grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;}
+  .lab{border:1px dashed #999;border-radius:4px;padding:10px;display:flex;flex-direction:column;align-items:center;page-break-inside:avoid;}
+  .lab .lab-inner{display:contents;}
+  .lab .t{font-size:11px;font-weight:600;margin:6px 0 2px;line-height:1.2;text-align:center;}
+  .lab .i{font-family:monospace;font-size:9px;color:#666;text-align:center;}
+  body.mode-tape{padding:0;}
+  body.mode-tape .toolbar{padding:16px 16px 0;}
+  body.mode-tape .grid{display:block;padding:0 16px 16px;}
+  body.mode-tape .lab{border:none;padding:0;width:32mm;height:24mm;box-sizing:border-box;display:flex;align-items:center;justify-content:center;overflow:hidden;page-break-after:always;break-after:page;}
+  body.mode-tape .lab .lab-inner{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1mm;width:24mm;height:32mm;transform:rotate(-90deg);flex:0 0 auto;}
+  body.mode-tape .lab .qr{width:20mm;height:20mm;flex:0 0 auto;}
+  body.mode-tape .lab .qr canvas, body.mode-tape .lab .qr img{width:100% !important;height:100% !important;}
+  body.mode-tape .lab .text{display:flex;flex-direction:column;align-items:center;width:22mm;overflow:hidden;}
+  body.mode-tape .lab .t{font-size:2.4mm;line-height:1.2;margin:0;text-align:center;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;overflow-wrap:break-word;width:100%;}
+  body.mode-tape .lab .i{font-size:2.2mm;color:#666;text-align:center;margin:0.5mm 0 0;}
+  @media (max-width:600px){ .grid{grid-template-columns:repeat(3,1fr);} }
+  @media print { .toolbar{ display:none; } .grid{grid-template-columns:repeat(5,1fr);} }
+</style>
+</head><body>
+  <div class="toolbar">
+    <button id="printBtn"></button>
+    <label><input type="radio" name="labelMode" value="sheet" checked> <span id="sheetLbl"></span></label>
+    <label><input type="radio" name="labelMode" value="tape"> <span id="tapeLbl"></span></label>
+  </div>
+  <div class="grid" id="g"></div>
+  <style id="pageSizeStyle"></style>
+  <script>
+    const books = ${json(items)};
+    const S = ${json(strings)};
+    document.getElementById('printBtn').textContent = S.print;
+    document.getElementById('sheetLbl').textContent = S.sheet;
+    document.getElementById('tapeLbl').textContent = S.tape;
+    document.getElementById('printBtn').onclick = () => window.print();
+    const g = document.getElementById('g');
+    const holders = [];
+    books.forEach(b => {
+      const cell = document.createElement('div'); cell.className = 'lab';
+      const inner = document.createElement('div'); inner.className = 'lab-inner';
+      const qr = document.createElement('div'); qr.className = 'qr';
+      const text = document.createElement('div'); text.className = 'text';
+      const t = document.createElement('div'); t.className = 't'; t.textContent = b.title;
+      const i = document.createElement('div'); i.className = 'i'; i.textContent = b.itemId;
+      text.appendChild(t); text.appendChild(i);
+      inner.appendChild(qr); inner.appendChild(text);
+      cell.appendChild(inner); g.appendChild(cell);
+      holders.push([qr, b.itemId]);
+    });
+    // Rendered well above print size so it stays crisp once CSS scales it down.
+    function drawQrs(){ holders.forEach(([el, id]) => { if(window.QRCode) new QRCode(el, { text: id, width: 160, height: 160 }); }); }
+    if(window.QRCode) drawQrs(); else window.addEventListener('load', drawQrs);
+    // Tape consumed per label ≈ 32mm — adjust if labels come out short or with blank tape.
+    const TAPE_LABEL_LENGTH_MM = 32;
+    document.querySelectorAll('input[name=labelMode]').forEach(r => r.onchange = () => {
+      const tape = r.value === 'tape' && r.checked;
+      document.body.classList.toggle('mode-tape', tape);
+      document.getElementById('pageSizeStyle').textContent = tape
+        ? '@page { size: ' + TAPE_LABEL_LENGTH_MM + 'mm 24mm; margin: 0; }' : '';
+    });
+  <\/script>
+</body></html>`);
+  win.document.close();
 }
 
 // Groups themselves come from the Config tab (BookGroups), not something
