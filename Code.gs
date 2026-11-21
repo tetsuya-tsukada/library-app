@@ -67,9 +67,10 @@
  *    appears next to Help — use its "Print QR labels" item any time to
  *    generate a printable label sheet (title, item ID, and a scannable
  *    QR code per book) right from the Sheet. This does not require the
- *    web app at all, and is the only place labels are printed from —
- *    the scanner app itself only shows a single label right after
- *    adding one book. Select one or more rows in the Books tab first
+ *    web app at all. (Admins can also print the same labels from the
+ *    web app's Shelf screen: tick books in the All books list and press
+ *    "Print QR labels" — see printShelfLabels_ in index.html, which
+ *    mirrors PRINT_LABELS_HTML below.) Select one or more rows in the Books tab first
  *    (click-drag the row numbers, or ctrl/cmd-click to select several)
  *    to print labels for just those books — handy when you've added a
  *    few new ones and don't want to reprint the whole catalog. With
