@@ -268,7 +268,7 @@ function setupSheets() {
   let users = ss.getSheetByName(USERS_SHEET);
   if (!users) {
     users = ss.insertSheet(USERS_SHEET);
-    users.appendRow(['Class', 'Name', 'Parent1', 'Parent2']);
+    users.appendRow(['Class', 'Sub Class', 'Title', 'Name', 'Parent1', 'Parent2']);
     users.setFrozenRows(1);
   }
 }
@@ -367,8 +367,21 @@ function migrateUserListSchema() {
   const lastCol = Math.max(sh.getLastColumn(), 5);
   const header = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(h => String(h).trim());
 
+  if (header[0] === 'Class' && header[1] === 'Sub Class' && header[2] === 'Title' && header[3] === 'Name') {
+    return; // new schema already applied
+  }
+
   if (header[0] === 'Class' && header[1] === 'Name' && header[2] === 'Parent1' && header[3] === 'Parent2') {
-    return; // already migrated
+    // Insert Sub Class (col B) and Title (col C)
+    sh.insertColumnsBefore(2, 2);
+    sh.getRange(1, 2).setValue('Sub Class');
+    sh.getRange(1, 3).setValue('Title');
+    const lastRow = sh.getLastRow();
+    if (lastRow > 1) {
+      const vals = Array.from({length: lastRow - 1}, () => ['Student']);
+      sh.getRange(2, 3, lastRow - 1, 1).setValues(vals);
+    }
+    return;
   }
 
   if (header[0] === 'Class' && header[1] === 'Name' && header[2] === 'Parent' && header[3] === 'Email' && header[4] === 'Phone') {
@@ -607,39 +620,45 @@ const PRINT_LABELS_HTML = `<!DOCTYPE html>
     display:flex;flex-direction:column;align-items:center;
     page-break-inside:avoid;
   }
+  .lab .lab-inner{display:contents;}
   .lab .t{font-size:11px;font-weight:600;margin:6px 0 2px;line-height:1.2;text-align:center;}
   .lab .i{font-family:monospace;font-size:9px;color:#666;text-align:center;}
 
   /* 24mm continuous-tape label-printer mode (e.g. Brother P-touch Cube)
-     — one label per printed page, laid out sideways along the tape's
-     length (QR on the left, title/item ID beside it), instead of the
-     grid above (meant for regular sheet paper). Toggled by
-     setLabelMode() below, which also injects a matching @page rule.
-     The tape's fixed 24mm width becomes the page HEIGHT here, since
-     that is the printer's cross-feed dimension; TAPE_LABEL_LENGTH_MM
-     below is a guess for how much tape to feed per label — adjust it
-     if labels come out cut short or with a lot of blank tape.
-     Whether this actually comes out at 24mm depends on the OS print
-     dialog sending that page size to the printer unscaled ("Actual
-     size", not "Fit to page") — check the first label against the tape
-     before printing a full run. */
+     — one label per printed page. The content is a portrait column
+     (QR on top, title + item ID below) rotated -90° inside a landscape
+     page so it reads top-to-bottom when the tape is held vertically.
+     Page width = TAPE_LABEL_LENGTH_MM (tape consumed); page height = 24mm
+     (tape width, fixed). The inner .lab-inner is 24mm × TAPE_LABEL_LENGTH_MM,
+     rotated -90°, so it visually fills the page exactly.
+     Print with "Actual size" (not "Fit to page") in the OS print dialog. */
   body.mode-tape{padding:0;}
   body.mode-tape .toolbar{padding:16px 16px 0;}
   body.mode-tape .grid{display:block;padding:0 16px 16px;}
   body.mode-tape .lab{
-    border:none;padding:0 2mm;width:100%;height:24mm;box-sizing:border-box;
-    flex-direction:row;align-items:center;
+    border:none;padding:0;width:32mm;height:24mm;box-sizing:border-box;
+    display:flex;align-items:center;justify-content:center;overflow:hidden;
     page-break-after:always;break-after:page;
+  }
+  /* Portrait inner column, rotated -90° to fit landscape tape page.
+     "top" of column → left edge of tape (cut end); "bottom" → right.
+     Hold the tape vertically (rotate CW) to read QR on top, text below. */
+  body.mode-tape .lab .lab-inner{
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:1mm;
+    width:24mm;height:32mm;
+    transform:rotate(-90deg);
+    flex:0 0 auto;
   }
   body.mode-tape .lab .qr{width:20mm;height:20mm;flex:0 0 auto;}
   body.mode-tape .lab .qr canvas, body.mode-tape .lab .qr img{width:100% !important;height:100% !important;}
-  body.mode-tape .lab .text{display:flex;flex-direction:column;justify-content:center;margin-left:2mm;max-width:40mm;overflow:hidden;}
+  body.mode-tape .lab .text{display:flex;flex-direction:column;align-items:center;width:22mm;overflow:hidden;}
   body.mode-tape .lab .t{
-    font-size:2.6mm;line-height:1.15;margin:0 0 0.8mm;text-align:left;
-    display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;
-    overflow:hidden;overflow-wrap:break-word;
+    font-size:2.4mm;line-height:1.2;margin:0;text-align:center;
+    display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;
+    overflow:hidden;overflow-wrap:break-word;width:100%;
   }
-  body.mode-tape .lab .i{font-size:2.4mm;text-align:left;}
+  body.mode-tape .lab .i{font-size:2.2mm;color:#666;text-align:center;margin:0.5mm 0 0;}
   @media print { .toolbar{ display:none; } }
 </style>
 </head>
@@ -668,7 +687,10 @@ const PRINT_LABELS_HTML = `<!DOCTYPE html>
       i.className = 'i';
       i.textContent = b.itemId;
       textWrap.appendChild(t); textWrap.appendChild(i);
-      cell.appendChild(qr); cell.appendChild(textWrap);
+      const inner = document.createElement('div');
+      inner.className = 'lab-inner';
+      inner.appendChild(qr); inner.appendChild(textWrap);
+      cell.appendChild(inner);
       g.appendChild(cell);
     });
     window.addEventListener('load', () => {
@@ -681,13 +703,10 @@ const PRINT_LABELS_HTML = `<!DOCTYPE html>
       });
     });
 
-    // The 24mm width matches a common continuous-tape width (e.g.
-    // Brother P-touch Cube) and becomes the page height in this layout
-    // (the tape's fixed cross-feed dimension); only the per-label
-    // length is a guess here — wide enough for the QR plus the title
-    // and item ID beside it. Adjust it if labels come out cut short or
-    // with a lot of blank tape.
-    const TAPE_LABEL_LENGTH_MM = 50;
+    // Tape consumed per label: QR (20mm) + gap (1mm) + title/ID (~8mm)
+    // + centering margin ≈ 32mm. Adjust if labels come out too short
+    // or with excess blank tape at the cut end.
+    const TAPE_LABEL_LENGTH_MM = 32;
     function setLabelMode(mode){
       document.body.classList.toggle('mode-tape', mode === 'tape');
       document.getElementById('pageSizeStyle').textContent = mode === 'tape'
@@ -826,8 +845,9 @@ function handleRequest_(p) {
     case 'getHistory':  return getHistory(p.adminEmail, p.filter, p.name);
     case 'getConfig':   return getPublicConfig();
     case 'searchUsers': return searchUsers(p.query);
+    case 'getClassStudents': return getClassStudents(p.teacherName);
     case 'listUsers':   return listUsers(p.adminEmail);
-    case 'saveUser':    return saveUser(p.adminEmail, p.rowIndex, p['class'], p.name, p.parent1, p.parent2);
+    case 'saveUser':    return saveUser(p.adminEmail, p.rowIndex, p['class'], p.subClass, p.title, p.name, p.parent1, p.parent2);
     case 'deleteUser':  return deleteUser(p.adminEmail, p.rowIndex);
     case 'listAdmins':  return listAdmins(p.adminEmail);
     case 'saveAdmin':   return saveAdmin(p.adminEmail, p.rowIndex, p.email, p.name);
@@ -1163,7 +1183,7 @@ function getUsersSheet_() {
 }
 
 function userRowToObject_(row) {
-  return { class: row[0] || '', name: row[1] || '', parent1: row[2] || '', parent2: row[3] || '' };
+  return { class: row[0] || '', subClass: row[1] || '', title: row[2] || '', name: row[3] || '', parent1: row[4] || '', parent2: row[5] || '' };
 }
 
 // Normalized identity for a User List row, used to collapse an
@@ -1212,7 +1232,7 @@ function searchUsers(query) {
   const seenRows = {};
   for (let i = 1; i < data.length; i++) {
     const row = userRowToObject_(data[i]);
-    const haystack = [row.class, row.name, row.parent1, row.parent2].join(' ').toLowerCase();
+    const haystack = [row.class, row.subClass, row.name, row.parent1, row.parent2].join(' ').toLowerCase();
     if (!haystack.includes(target)) continue;
     // A hand-maintained roster can end up with an accidentally duplicated
     // row (same person entered twice) — collapse exact duplicates so they
@@ -1223,7 +1243,7 @@ function searchUsers(query) {
     rows.push(row);
   }
   const limited = rows.slice(0, 25);
-  const candidates = limited.map(r => ({ type: 'individual', class: r.class, name: r.name, parent1: r.parent1, parent2: r.parent2 }));
+  const candidates = limited.map(r => ({ type: 'individual', class: r.class, subClass: r.subClass, title: r.title, name: r.name, parent1: r.parent1, parent2: r.parent2 }));
 
   // Grouped by a case/whitespace-normalized key so "Tetsuya Tsukada" and
   // "tetsuya tsukada " (an easy inconsistency to have across sibling rows
@@ -1409,6 +1429,35 @@ function getSummary(adminEmail) {
   };
 }
 
+// Look up the teacher's class+subClass by name from the sheet (avoids
+// client-side value mismatches), then return all non-teacher students
+// in that class+subClass combination.
+function getClassStudents(teacherName) {
+  const { data } = getUsersSheet_();
+  let teacherClass = '', teacherSubClass = '';
+  const tName = String(teacherName || '').trim().toLowerCase();
+  for (let i = 1; i < data.length; i++) {
+    const r = userRowToObject_(data[i]);
+    if (String(r.name || '').trim().toLowerCase() === tName && String(r.title || '').trim() === 'Teacher') {
+      teacherClass = String(r.class || '').trim();
+      teacherSubClass = String(r.subClass == null ? '' : r.subClass).trim();
+      break;
+    }
+  }
+  if (!teacherClass) return { students: [] };
+  const students = [];
+  for (let i = 1; i < data.length; i++) {
+    const r = userRowToObject_(data[i]);
+    if (!r.name) continue;
+    if (String(r.class || '').trim() === teacherClass &&
+        String(r.subClass == null ? '' : r.subClass).trim() === teacherSubClass &&
+        String(r.title || '').trim() !== 'Teacher') {
+      students.push({ name: r.name, class: r.class, subClass: r.subClass, parent1: r.parent1 });
+    }
+  }
+  return { students };
+}
+
 function listUsers(adminEmail) {
   if (!adminEmail || !isAdmin_(adminEmail)) return { error: 'Not authorized' };
   const sh = getSS().getSheetByName(USERS_SHEET);
@@ -1417,21 +1466,21 @@ function listUsers(adminEmail) {
   const users = [];
   for (let i = 1; i < data.length; i++) {
     const r = data[i];
-    if (!r[0] && !r[1] && !r[2] && !r[3]) continue;
-    users.push({ rowIndex: i + 1, class: String(r[0] || ''), name: String(r[1] || ''), parent1: String(r[2] || ''), parent2: String(r[3] || '') });
+    if (!r[0] && !r[3]) continue;
+    users.push({ rowIndex: i + 1, class: String(r[0] || ''), subClass: String(r[1] || ''), title: String(r[2] || ''), name: String(r[3] || ''), parent1: String(r[4] || ''), parent2: String(r[5] || '') });
   }
   return { users };
 }
 
-function saveUser(adminEmail, rowIndex, classVal, name, parent1, parent2) {
+function saveUser(adminEmail, rowIndex, classVal, subClass, title, name, parent1, parent2) {
   if (!adminEmail || !isAdmin_(adminEmail)) return { error: 'Not authorized' };
   if (!String(name || '').trim()) return { error: 'Name is required' };
   const sh = getSS().getSheetByName(USERS_SHEET);
   if (!sh) return { error: 'User List tab not found — run setupSheets first' };
-  const vals = [[String(classVal || '').trim(), String(name).trim(), String(parent1 || '').trim(), String(parent2 || '').trim()]];
+  const vals = [[String(classVal || '').trim(), String(subClass || '').trim(), String(title || 'Student').trim(), String(name).trim(), String(parent1 || '').trim(), String(parent2 || '').trim()]];
   const rowNum = parseInt(rowIndex, 10);
   if (rowNum >= 2) {
-    sh.getRange(rowNum, 1, 1, 4).setValues(vals);
+    sh.getRange(rowNum, 1, 1, 6).setValues(vals);
   } else {
     sh.appendRow(vals[0]);
   }
