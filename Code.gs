@@ -45,7 +45,7 @@
  *    this column existed, run `migrateBooksAddGroupColumn_` once first
  *    — see that function's comment.
  * 11. Run `setupConfigSheet` once. This creates a Config tab (Key/Value
- *    columns) pre-filled with a LoanDays row (default 14), a
+ *    columns) pre-filled with a LoanWeeks row (default 2), a
  *    MaxBorrowItems row (default 4), an AdminSecret row (default
  *    "changeme" — change this immediately, it's the shared admin
  *    passcode), a SiteAccessCode row (default "changeme-site-code" —
@@ -59,7 +59,7 @@
  *    then run the 📚 Library menu's "Refresh book Group dropdown" item to
  *    update the Sheet-side dropdown to match). Edit any of these any
  *    time — the app reads this tab on every load, so there's no code
- *    change or redeploy needed to update them. Changing LoanDays changes
+ *    change or redeploy needed to update them. Changing LoanWeeks changes
  *    the default due date for future borrows only, not books already
  *    borrowed. Changing MaxBorrowItems changes how many books someone
  *    can have Borrowed at once before new borrow requests are rejected.
@@ -170,7 +170,7 @@ const HISTORY_SHEET = 'History';
 const ADMINS_SHEET = 'Admins';
 const CONFIG_SHEET = 'Config';
 const USERS_SHEET = 'User List';
-const LOAN_DAYS = 14;
+const LOAN_WEEKS = 2;
 const MAX_BORROW_ITEMS = 4;
 const SITE_ACCESS_TTL_HOURS = 24;
 // Books sheet column layout: ItemID, Title, Author, Group, Status,
@@ -432,8 +432,8 @@ function setupConfigSheet() {
   for (let i = 1; i < data.length; i++) existingKeys[String(data[i][0]).trim()] = true;
 
   const defaults = [
-    ['LoanDays',          String(LOAN_DAYS)],
-    ['LoanDaysAdult',     String(LOAN_DAYS)],
+    ['LoanWeeks',         String(LOAN_WEEKS)],
+    ['LoanWeeksAdult',    String(LOAN_WEEKS)],
     ['MaxBorrowItems',    String(MAX_BORROW_ITEMS)],
     ['AdminSecret',       'changeme'],
     ['SiteAccessCode',    'changeme-site-code'],
@@ -457,9 +457,19 @@ function setupConfigSheet() {
         return;
       }
     }
-    sh.appendRow([key, val]);
+    // Migrate from old LoanDays/LoanDaysAdult keys — convert days → weeks
+    let migratedVal = val;
+    if (key === 'LoanWeeks' && existingKeys['LoanDays']) {
+      const oldRow = rows.find((r, i) => i > 0 && String(r[0]).trim() === 'LoanDays');
+      if (oldRow) migratedVal = String(Math.max(1, Math.round(parseInt(oldRow[1], 10) / 7)));
+    }
+    if (key === 'LoanWeeksAdult' && existingKeys['LoanDaysAdult']) {
+      const oldRow = rows.find((r, i) => i > 0 && String(r[0]).trim() === 'LoanDaysAdult');
+      if (oldRow) migratedVal = String(Math.max(1, Math.round(parseInt(oldRow[1], 10) / 7)));
+    }
+    sh.appendRow([key, migratedVal]);
     existingKeys[key] = true;
-    rows.push([key, val]);
+    rows.push([key, migratedVal]);
   });
 }
 
@@ -471,17 +481,20 @@ function getAdminSecret_() {
   return String(cfg.AdminSecret || '').trim();
 }
 
-// Reads the loan period from the Config tab (LoanDays), falling back to
-// the LOAN_DAYS constant if the key is missing, blank, or not a number —
-// so an empty/misconfigured cell can't silently break borrowing.
+// Reads loan period in weeks from Config (LoanWeeks), converts to days.
+// Falls back to old LoanDays row for existing sheets, then the constant.
 function getLoanDays_() {
   const cfg = getConfig();
+  const weeks = parseInt(cfg.LoanWeeks, 10);
+  if (!isNaN(weeks) && weeks > 0) return weeks * 7;
   const days = parseInt(cfg.LoanDays, 10);
-  return (!isNaN(days) && days > 0) ? days : LOAN_DAYS;
+  return (!isNaN(days) && days > 0) ? days : LOAN_WEEKS * 7;
 }
 
 function getLoanDaysAdult_() {
   const cfg = getConfig();
+  const weeks = parseInt(cfg.LoanWeeksAdult, 10);
+  if (!isNaN(weeks) && weeks > 0) return weeks * 7;
   const days = parseInt(cfg.LoanDaysAdult, 10);
   return (!isNaN(days) && days > 0) ? days : getLoanDays_();
 }
@@ -545,14 +558,14 @@ function verifySiteCode(code) {
 // ever hand back this filtered subset instead.
 function getPublicConfig() {
   const cfg = getConfig();
-  return { LoanDays: cfg.LoanDays, LoanDaysAdult: cfg.LoanDaysAdult, MaxBorrowItems: cfg.MaxBorrowItems, BookGroups: cfg.BookGroups || '' };
+  return { LoanWeeks: cfg.LoanWeeks, LoanWeeksAdult: cfg.LoanWeeksAdult, MaxBorrowItems: cfg.MaxBorrowItems, BookGroups: cfg.BookGroups || '' };
 }
 
 function saveConfig(adminEmail, params) {
   if (!adminEmail || !isAdmin_(adminEmail)) return { error: 'Not authorized' };
   const sh = getSS().getSheetByName(CONFIG_SHEET);
   if (!sh) return { error: 'Config tab not found — run setupConfigSheet first' };
-  const editable = { LoanDays: 'LoanDays', LoanDaysAdult: 'LoanDaysAdult' };
+  const editable = { LoanWeeks: 'LoanWeeks', LoanWeeksAdult: 'LoanWeeksAdult' };
   const data = sh.getDataRange().getValues();
   Object.keys(editable).forEach(key => {
     if (params[key] === undefined) return;
