@@ -431,18 +431,35 @@ function setupConfigSheet() {
   const existingKeys = {};
   for (let i = 1; i < data.length; i++) existingKeys[String(data[i][0]).trim()] = true;
 
-  const defaults = {
-    LoanDays: String(LOAN_DAYS),
-    LoanDaysAdult: String(LOAN_DAYS),
-    MaxBorrowItems: String(MAX_BORROW_ITEMS),
-    AdminSecret: 'changeme',
-    SiteAccessCode: 'changeme-site-code',
-    SiteAccessTTLHours: String(SITE_ACCESS_TTL_HOURS),
-    SiteUrl: 'https://tetsuya-tsukada.github.io/library-app/',
-    BookGroups: 'Fiction, Non-fiction, Picture Books, Reference'
-  };
-  Object.keys(defaults).forEach(key => {
-    if (!existingKeys[key]) sh.appendRow([key, defaults[key]]);
+  const defaults = [
+    ['LoanDays',          String(LOAN_DAYS)],
+    ['LoanDaysAdult',     String(LOAN_DAYS)],
+    ['MaxBorrowItems',    String(MAX_BORROW_ITEMS)],
+    ['AdminSecret',       'changeme'],
+    ['SiteAccessCode',    'changeme-site-code'],
+    ['SiteAccessTTLHours',String(SITE_ACCESS_TTL_HOURS)],
+    ['SiteUrl',           'https://tetsuya-tsukada.github.io/library-app/'],
+    ['BookGroups',        'Fiction, Non-fiction, Picture Books, Reference']
+  ];
+  // Re-read after potential header insert above
+  const rows = sh.getDataRange().getValues();
+  defaults.forEach(([key, val], di) => {
+    if (existingKeys[key]) return;
+    // Find the row index of the previous default key to insert just after it
+    const prevKey = di > 0 ? defaults[di - 1][0] : null;
+    if (prevKey && existingKeys[prevKey]) {
+      const prevRow = rows.findIndex((r, i) => i > 0 && String(r[0]).trim() === prevKey);
+      if (prevRow !== -1) {
+        sh.insertRowAfter(prevRow + 1); // +1 because sheet rows are 1-indexed
+        sh.getRange(prevRow + 2, 1, 1, 2).setValues([[key, val]]);
+        existingKeys[key] = true;
+        rows.splice(prevRow + 1, 0, [key, val]); // keep our local index in sync
+        return;
+      }
+    }
+    sh.appendRow([key, val]);
+    existingKeys[key] = true;
+    rows.push([key, val]);
   });
 }
 
