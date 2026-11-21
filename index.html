@@ -2415,7 +2415,7 @@ function applyReportFilters_(){
 let scanPatronComposing_ = false;
 let reportBorrowerComposing_ = false;
 // Japanese names can be 1–2 chars; use a lower minimum for non-ASCII input.
-function minQueryLen_(q){ return /[^\x00-\x7F]/.test(q) ? 1 : 4; }
+function minQueryLen_(q){ return /[^\x00-\x7F]/.test(q) ? 1 : 3; }
 
 const onReportBorrowerSearch_ = debounce_(async function(){
   const query = (document.getElementById('reportBorrowerFilter').value || '').trim();
@@ -2564,14 +2564,19 @@ function renderPatronCandidates_(candidates, listEl, searchInputId){
       <div style="display:flex;flex-direction:column;gap:6px;min-width:120px;">
         <button class="btn btn-primary btn-sm" style="width:100%;" data-idx="${i}">${escapeHtml(t('patron_use_for_scan'))}</button>
         <button class="btn btn-outline btn-sm" style="width:100%;" data-tcls-idx="${i}">${escapeHtml(t('teacher_borrow_class_btn'))}</button>
-      </div>` : `<button class="btn btn-primary btn-sm" style="min-width:120px;" data-idx="${i}">${escapeHtml(t('patron_use_for_scan'))}</button>`}
+      </div>` : `
+      <div style="min-width:120px;">
+        <button class="btn btn-primary btn-sm" style="width:100%;" data-idx="${i}">${escapeHtml(t('patron_use_for_scan'))}</button>
+      </div>`}
     </div>` : `
     <div class="book-row">
       <div class="meta">
         <div class="title">${escapeHtml(c.name)} <span style="opacity:0.6;font-weight:400;">${escapeHtml(t('patron_parent_label'))}</span></div>
         <div class="sub">${escapeHtml(t('patron_parent_of', { children: c.children.map(ch=>ch.name).join(', ') }))}</div>
       </div>
-      <button class="btn btn-outline btn-sm" style="min-width:120px;" data-idx="${i}">${escapeHtml(t('patron_use_family_for_scan'))}</button>
+      <div style="min-width:120px;">
+        <button class="btn btn-outline btn-sm" style="width:100%;" data-idx="${i}">${escapeHtml(t('patron_use_family_for_scan'))}</button>
+      </div>
     </div>`).join('');
   listEl.querySelectorAll('button[data-idx]').forEach(btn=>{
     const c = candidates[Number(btn.dataset.idx)];
