@@ -2524,9 +2524,9 @@ function renderPatronCandidates_(candidates, listEl, searchInputId){
         <div class="sub">${escapeHtml(c.class)}${c.subClass?'-'+escapeHtml(c.subClass):''}${c.parent1?' · '+escapeHtml(t('patron_parent1', { name: c.parent1 })):''}${c.parent2?' · '+escapeHtml(t('patron_parent2', { name: c.parent2 })):''}</div>
       </div>
       ${c.title === 'Teacher' && c.class ? `
-      <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end;">
-        <button class="btn btn-primary btn-sm" data-idx="${i}">${escapeHtml(t('patron_use_for_scan'))}</button>
-        <button class="btn btn-outline btn-sm" data-tcls-idx="${i}">${escapeHtml(t('teacher_borrow_class_btn'))}</button>
+      <div style="display:flex;flex-direction:column;gap:6px;min-width:120px;">
+        <button class="btn btn-primary btn-sm" style="width:100%;" data-idx="${i}">${escapeHtml(t('patron_use_for_scan'))}</button>
+        <button class="btn btn-outline btn-sm" style="width:100%;" data-tcls-idx="${i}">${escapeHtml(t('teacher_borrow_class_btn'))}</button>
       </div>` : `<button class="btn btn-primary btn-sm" data-idx="${i}">${escapeHtml(t('patron_use_for_scan'))}</button>`}
     </div>` : `
     <div class="book-row">
