@@ -578,7 +578,8 @@ function saveConfig(adminEmail, params) {
       }
     }
   });
-  _configCache = null; // bust cache so next read picks up new values
+  _configCache = null;
+  try { CacheService.getScriptCache().remove('lib_config'); } catch(e) {}
   return { ok: true };
 }
 
