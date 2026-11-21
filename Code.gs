@@ -433,6 +433,7 @@ function setupConfigSheet() {
 
   const defaults = {
     LoanDays: String(LOAN_DAYS),
+    LoanDaysAdult: String(LOAN_DAYS),
     MaxBorrowItems: String(MAX_BORROW_ITEMS),
     AdminSecret: 'changeme',
     SiteAccessCode: 'changeme-site-code',
@@ -460,6 +461,12 @@ function getLoanDays_() {
   const cfg = getConfig();
   const days = parseInt(cfg.LoanDays, 10);
   return (!isNaN(days) && days > 0) ? days : LOAN_DAYS;
+}
+
+function getLoanDaysAdult_() {
+  const cfg = getConfig();
+  const days = parseInt(cfg.LoanDaysAdult, 10);
+  return (!isNaN(days) && days > 0) ? days : getLoanDays_();
 }
 
 // Same fallback treatment as getLoanDays_(), for the per-person borrow cap.
@@ -521,7 +528,7 @@ function verifySiteCode(code) {
 // ever hand back this filtered subset instead.
 function getPublicConfig() {
   const cfg = getConfig();
-  return { LoanDays: cfg.LoanDays, MaxBorrowItems: cfg.MaxBorrowItems, BookGroups: cfg.BookGroups || '' };
+  return { LoanDays: cfg.LoanDays, LoanDaysAdult: cfg.LoanDaysAdult, MaxBorrowItems: cfg.MaxBorrowItems, BookGroups: cfg.BookGroups || '' };
 }
 
 let _configCache = null;
@@ -988,6 +995,7 @@ function scanBookBatch(itemsJson, adminEmail) {
     const itemId = item.itemId;
     const name = item.name || '';
     const contact = item.contact || '';
+    const isAdult = !!item.isAdult;
     const row = findRow_(data, itemId);
     if (row === -1) { results.push({ itemId, error: 'Book not found' }); return; }
     const title = data[row][1];
@@ -1002,7 +1010,8 @@ function scanBookBatch(itemsJson, adminEmail) {
         return;
       }
       activeCounts[key] = activeCount + 1;
-      const due = new Date(now.getTime() + getLoanDays_() * 24 * 60 * 60 * 1000);
+      const loanDays = isAdult ? getLoanDaysAdult_() : getLoanDays_();
+      const due = new Date(now.getTime() + loanDays * 24 * 60 * 60 * 1000);
       data[row][4] = 'Borrowed'; data[row][5] = name; data[row][6] = contact || '';
       data[row][7] = now; data[row][8] = due;
       data[row][9] = (parseInt(data[row][9], 10) || 0) + 1;

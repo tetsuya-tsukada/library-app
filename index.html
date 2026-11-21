@@ -1644,7 +1644,7 @@ function promptFamilyRoundMember_(family){
         <button class="btn btn-primary btn-sm" ${atLimit ? 'disabled' : ''}>${atLimit ? escapeHtml(t('limit_reached_option_btn')) : escapeHtml(t('select_btn'))}</button>`;
       if(!atLimit){
         row.querySelector('button').onclick = () => {
-          familyRoundMember_ = { name: o.name, contact: o.contact, activeCount: serverCount };
+          familyRoundMember_ = { name: o.name, contact: o.contact, activeCount: serverCount, isAdult: !!o.isSelf };
           familyPickerOpen_ = false;
           area.innerHTML = '';
           updateScanIdentityBanner();
@@ -1770,11 +1770,11 @@ async function lookupAndQueueScan_(itemId){
         if((familyRoundMember_.activeCount || 0) + alreadyQueued >= max){
           flashScanNote_(t('scan_family_limit_reached', { name: familyRoundMember_.name, max }));
         } else {
-          addToQueue_(itemId, data.title, 'borrow', familyRoundMember_.name, familyRoundMember_.contact);
+          addToQueue_(itemId, data.title, 'borrow', familyRoundMember_.name, familyRoundMember_.contact, familyRoundMember_.isAdult);
           if((familyRoundMember_.activeCount || 0) + scanQueue.filter(q => q.action === 'borrow' && q.name === familyRoundMember_.name).length >= max){ autoStopAfterScan_ = true; autoStopIsLimit_ = true; }
         }
       } else if(ACTING_AS){
-        addToQueue_(itemId, data.title, 'borrow', ACTING_AS.name, ACTING_AS.contact);
+        addToQueue_(itemId, data.title, 'borrow', ACTING_AS.name, ACTING_AS.contact, ACTING_AS.title === 'Teacher');
         if(preScanLoanCount_ !== null){
           const max = CONFIG.maxBorrowItems || 4;
           if(preScanLoanCount_ + scanQueue.filter(q => q.action === 'borrow' && q.name === ACTING_AS.name).length >= max){ autoStopAfterScan_ = true; autoStopIsLimit_ = true; }
@@ -1818,8 +1818,8 @@ function renderScanMoreOrReview_(){
   document.getElementById('cancelQueueBtn').onclick = () => { scanQueue = []; renderScanQueue(); area.innerHTML = ''; };
 }
 
-function addToQueue_(itemId, title, action, name, contact){
-  scanQueue.push({ itemId, title, action, name, contact });
+function addToQueue_(itemId, title, action, name, contact, isAdult){
+  scanQueue.push({ itemId, title, action, name, contact, isAdult: !!isAdult });
   renderScanQueue();
   flashScanToast_(t(action === 'borrow' ? 'borrow_scanned_toast' : 'return_scanned_toast', { title }));
 }
@@ -1912,7 +1912,7 @@ async function commitScanQueue(){
 // entry, in the same order, ready for their own results renderer.
 async function commitBatch_(queue, adminEmail){
   try{
-    const items = queue.map(q => ({ itemId: q.itemId, name: q.name || '', contact: q.contact || '' }));
+    const items = queue.map(q => ({ itemId: q.itemId, name: q.name || '', contact: q.contact || '', isAdult: q.isAdult || false }));
     const data = await apiFetch_('scanBatch', { items: JSON.stringify(items), adminEmail: adminEmail || undefined });
     if(data.error) return queue.map(q => ({ q, data: { error: data.error } }));
     return queue.map((q, i) => ({ q, data: (data.results && data.results[i]) || { error: t('no_result_returned') } }));
@@ -2447,7 +2447,7 @@ function renderHistoryRows_(rows, showBorrower, now){
 }
 
 async function actAsUser(user){
-  ACTING_AS = { name: user.name, contact: contactOf_(user) };
+  ACTING_AS = { name: user.name, contact: contactOf_(user), title: user.title || '' };
   resetScanResult_();
   showScreen('scan');
   await beginScanningSession_();
