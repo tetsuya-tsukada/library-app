@@ -164,7 +164,7 @@
  * -----------------------------------------------------
  */
 
-const SHEET_ID = ''; // leave blank if script is bound to the sheet
+const SHEET_ID = '184Jaz-D2Wg5qbc2uANMFkyxjo5lCszz9X92zIfRp5Dk';
 const BOOKS_SHEET = 'Books';
 const TX_SHEET = 'Transactions';
 const HISTORY_SHEET = 'History';
@@ -684,49 +684,14 @@ const PRINT_LABELS_HTML = `<!DOCTYPE html>
   .lab .t{font-size:11px;font-weight:600;margin:6px 0 2px;line-height:1.2;text-align:center;}
   .lab .i{font-family:monospace;font-size:9px;color:#666;text-align:center;}
 
-  /* 24mm continuous-tape label-printer mode (e.g. Brother P-touch Cube)
-     — one label per printed page. The content is a portrait column
-     (QR on top, title + item ID below) rotated -90° inside a landscape
-     page so it reads top-to-bottom when the tape is held vertically.
-     Page width = TAPE_LABEL_LENGTH_MM (tape consumed); page height = 24mm
-     (tape width, fixed). The inner .lab-inner is 24mm × TAPE_LABEL_LENGTH_MM,
-     rotated -90°, so it visually fills the page exactly.
-     Print with "Actual size" (not "Fit to page") in the OS print dialog. */
-  body.mode-tape{padding:0;}
-  body.mode-tape .toolbar{padding:16px 16px 0;}
-  body.mode-tape .grid{display:block;padding:0 16px 16px;}
-  body.mode-tape .lab{
-    border:none;padding:0;width:32mm;height:24mm;box-sizing:border-box;
-    display:flex;align-items:center;justify-content:center;overflow:hidden;
-    page-break-after:always;break-after:page;
-  }
-  /* Portrait inner column, rotated -90° to fit landscape tape page.
-     "top" of column → left edge of tape (cut end); "bottom" → right.
-     Hold the tape vertically (rotate CW) to read QR on top, text below. */
-  body.mode-tape .lab .lab-inner{
-    display:flex;flex-direction:column;align-items:center;justify-content:center;
-    gap:1mm;
-    width:24mm;height:32mm;
-    transform:rotate(-90deg);
-    flex:0 0 auto;
-  }
-  body.mode-tape .lab .qr{width:20mm;height:20mm;flex:0 0 auto;}
-  body.mode-tape .lab .qr canvas, body.mode-tape .lab .qr img{width:100% !important;height:100% !important;}
-  body.mode-tape .lab .text{display:flex;flex-direction:column;align-items:center;width:22mm;overflow:hidden;}
-  body.mode-tape .lab .t{
-    font-size:2.4mm;line-height:1.2;margin:0;text-align:center;
-    display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;
-    overflow:hidden;overflow-wrap:break-word;width:100%;
-  }
-  body.mode-tape .lab .i{font-size:2.2mm;color:#666;text-align:center;margin:0.5mm 0 0;}
-  @media print { .toolbar{ display:none; } }
+  @media print { .toolbar{ display:none; } body{ padding:0!important; margin:0!important; } }
 </style>
 </head>
 <body>
   <div class="toolbar">
-    <button onclick="window.print()">Print</button>
-    <label><input type="radio" name="labelMode" value="sheet" checked onchange="setLabelMode(this.value)"> Sheet (regular paper)</label>
-    <label><input type="radio" name="labelMode" value="tape" onchange="setLabelMode(this.value)"> Label printer — 24mm tape (e.g. Brother P-touch Cube)</label>
+    <button id="printBtn" onclick="handlePrint()">Print</button>
+    <label><input type="radio" name="mode" value="sheet" checked onchange="setMode(this.value)"> Sheet (A4)</label>
+    <label><input type="radio" name="mode" value="tape" onchange="setMode(this.value)"> 20mm tape (PT-P710BT)</label>
   </div>
   <div class="grid" id="g"></div>
   <style id="pageSizeStyle"></style>
@@ -756,25 +721,81 @@ const PRINT_LABELS_HTML = `<!DOCTYPE html>
     window.addEventListener('load', () => {
       books.forEach(b => {
         const holder = document.querySelector('.qr-' + b.itemId.replace(/[^a-zA-Z0-9-]/g, ''));
-        // Rendered well above its on-screen/print size (see the .qr
-        // sizing under tape mode below) so it stays crisp once CSS
-        // scales it down to the exact physical label dimensions.
         if (holder && window.QRCode) new QRCode(holder, { text: b.itemId, width: 160, height: 160 });
       });
     });
 
-    // Tape consumed per label: QR (20mm) + gap (1mm) + title/ID (~8mm)
-    // + centering margin ≈ 32mm. Adjust if labels come out too short
-    // or with excess blank tape at the cut end.
-    const TAPE_LABEL_LENGTH_MM = 32;
-    function setLabelMode(mode){
-      document.body.classList.toggle('mode-tape', mode === 'tape');
-      document.getElementById('pageSizeStyle').textContent = mode === 'tape'
-        ? '@page { size: ' + TAPE_LABEL_LENGTH_MM + 'mm 24mm; margin: 0; }'
-        : '';
+    var currentMode = 'sheet';
+    function setMode(m){
+      currentMode = m;
+      var tape = m === 'tape';
+      // Page size: auto-width × 20mm-height strip for tape, default A4 for sheet
+      document.getElementById('pageSizeStyle').textContent = tape
+        ? '@page { size: auto 24mm; margin: 0; }' : '';
+      document.body.style.padding = tape ? '0' : '16px';
+      var grid = document.getElementById('g');
+      grid.style.display       = tape ? 'block' : '';
+      grid.style.flexDirection = '';
+      grid.style.gap           = tape ? '0' : '';
+      grid.style.width         = '';
+      document.querySelectorAll('.lab').forEach(function(lab){
+        lab.style.width          = tape ? 'max-content' : '';
+        lab.style.height         = tape ? '24mm' : '';
+        lab.style.flexDirection  = tape ? 'row' : '';
+        lab.style.alignItems     = tape ? 'center' : '';
+        lab.style.border         = tape ? 'none' : '';
+        lab.style.padding        = tape ? '0' : '';
+        lab.style.pageBreakAfter = tape ? 'always' : '';
+        var tw = lab.querySelector('.text');
+        if(tw) {
+          tw.style.display        = tape ? 'flex' : '';
+          tw.style.flexDirection  = tape ? 'column' : '';
+          tw.style.justifyContent = tape ? 'center' : '';
+          tw.style.overflow       = tape ? 'hidden' : '';
+          tw.style.maxWidth       = tape ? '20mm' : '';
+          tw.style.marginRight    = tape ? '1mm' : '';
+        }
+        // Title: 2 lines max (line 1-2), code is line 3
+        var t = lab.querySelector('.t');
+        if(t) {
+          t.style.fontSize   = tape ? '3mm' : '';
+          t.style.fontWeight = tape ? '600' : '';
+          t.style.margin     = tape ? '0 0 1mm' : '';
+          t.style.textAlign  = tape ? 'left' : '';
+          t.style.lineHeight = tape ? '1.2' : '';
+          t.style.overflow   = tape ? 'hidden' : '';
+          t.style.maxHeight  = tape ? '10.8mm' : ''; // 3 lines × 3mm × 1.2
+        }
+        var i = lab.querySelector('.i');
+        if(i) {
+          i.style.fontSize  = tape ? '2.5mm' : '';
+          i.style.textAlign = tape ? 'left' : '';
+          i.style.color     = tape ? '#333' : '';
+        }
+      });
+      // Regenerate QR codes at the right size — 18mm × 18mm for tape (matches @92)
+      var qrPx = tape ? 68 : 160; // 18mm@96dpi ≈ 68px
+      books.forEach(function(b){
+        var holder = document.querySelector('.qr-' + b.itemId.replace(/[^a-zA-Z0-9-]/g, ''));
+        if(!holder) return;
+        holder.innerHTML = '';
+        holder.style.width      = tape ? '18mm' : '';
+        holder.style.height     = tape ? '18mm' : '';
+        holder.style.flexShrink = tape ? '0' : '';
+        holder.style.margin     = tape ? '2mm 2mm 2mm 2mm' : '';
+        if(window.QRCode) new QRCode(holder, {text: b.itemId, width: qrPx, height: qrPx});
+        // Scale canvas to fill the holder at print resolution
+        var c = holder.querySelector('canvas,img');
+        if(c) { c.style.width = tape ? '100%' : ''; c.style.height = tape ? '100%' : ''; }
+      });
+    }
+
+    function handlePrint(){
+      window.print();
     }
   </script>
 </body></html>`;
+
 
 // A 32-character mix of letters, digits, and symbols — plenty of entropy
 // for a shared secret, and printed only as a QR code so nobody ever
